@@ -1,0 +1,11 @@
+[package]
+name = "edrus"
+version = "0.1.0"
+authors = ["Leonardo Hahn <leonnardo.hahn@gmail.com>"]
+edition = "2018"
+
+[lib]
+name = "edrus"
+path = "src/lib.rs"
+
+[dependencies]
