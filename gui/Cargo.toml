@@ -16,3 +16,6 @@ glsl-to-spirv = "0.1"
 wgpu_glyph = "0.6"
 edrus = { path = "../editor" }
 log = "0.4"
+rusttype = "0.8"
+zerocopy = "0.3"
+shaderc = "0.6"

@@ -1,17 +1,42 @@
 extern crate edrus;
 extern crate env_logger;
 extern crate log;
+extern crate rusttype;
+extern crate shaderc;
 extern crate wgpu;
 extern crate wgpu_glyph;
 extern crate winit;
+extern crate zerocopy;
 
-use edrus::text_buffer::TextBuffer;
 use wgpu_glyph::{GlyphBrushBuilder, Scale, Section};
 use winit::{
     event,
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
+use zerocopy::AsBytes;
+
+#[derive(Debug, Clone, AsBytes)]
+#[repr(C)]
+struct Vec4([f32; 4]);
+
+impl Vec4 {
+    fn new(x: f32, y: f32, z: f32) -> Vec4 {
+        Vec4([x, y, z, 1.0])
+    }
+}
+
+fn create_cursor() -> (Vec<Vec4>, Vec<u16>) {
+    let vertex_data = [
+        Vec4::new(0.0, 0.0, 0.0),
+        Vec4::new(5.0, 0.0, 0.0),
+        Vec4::new(5.0, 5.0, 0.0),
+        Vec4::new(0.0, 5.0, 0.0),
+    ];
+
+    let index_data: &[u16] = &[0, 1, 2, 2, 3, 0];
+    (vertex_data.to_vec(), index_data.to_vec())
+}
 
 fn main() {
     std::env::set_var("RUST_LOG", "edrus=debug");
@@ -54,59 +79,114 @@ fn main() {
         limits: wgpu::Limits::default(),
     });
 
-    let font: &[u8] = include_bytes!("consola.ttf");
-    let mut glyph_brush = GlyphBrushBuilder::using_font_bytes(font)
+    let font_data: &[u8] = include_bytes!("consola.ttf");
+
+    let collection = rusttype::FontCollection::from_bytes(font_data).unwrap();
+    let font = collection.into_font().unwrap();
+
+    let mut glyph_brush = GlyphBrushBuilder::using_font_bytes(font_data)
         .build(&mut device, wgpu::TextureFormat::Bgra8UnormSrgb);
 
-    // let vs = include_bytes!("shader.vert.spv");
-    // let vs_module =
-    //     device.create_shader_module(&wgpu::read_spirv(std::io::Cursor::new(&vs[..])).unwrap());
+    let vertex_source = r#"
+    #version 450
 
-    // let fs = include_bytes!("shader.frag.spv");
-    // let fs_module =
-    //     device.create_shader_module(&wgpu::read_spirv(std::io::Cursor::new(&fs[..])).unwrap());
+    out gl_PerVertex {
+        vec4 gl_Position;
+    };
 
-    // let bind_group_layout =
-    //     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { bindings: &[] });
-    // let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-    //     layout: &bind_group_layout,
-    //     bindings: &[],
-    // });
-    // let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-    //     bind_group_layouts: &[&bind_group_layout],
-    // });
+    layout(location = 0) in vec4 a_pos;
 
-    // let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-    //     layout: &pipeline_layout,
-    //     vertex_stage: wgpu::ProgrammableStageDescriptor {
-    //         module: &vs_module,
-    //         entry_point: "main",
-    //     },
-    //     fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-    //         module: &fs_module,
-    //         entry_point: "main",
-    //     }),
-    //     rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-    //         front_face: wgpu::FrontFace::Ccw,
-    //         cull_mode: wgpu::CullMode::None,
-    //         depth_bias: 0,
-    //         depth_bias_slope_scale: 0.0,
-    //         depth_bias_clamp: 0.0,
-    //     }),
-    //     primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-    //     color_states: &[wgpu::ColorStateDescriptor {
-    //         format: wgpu::TextureFormat::Bgra8UnormSrgb,
-    //         color_blend: wgpu::BlendDescriptor::REPLACE,
-    //         alpha_blend: wgpu::BlendDescriptor::REPLACE,
-    //         write_mask: wgpu::ColorWrite::ALL,
-    //     }],
-    //     depth_stencil_state: None,
-    //     index_format: wgpu::IndexFormat::Uint16,
-    //     vertex_buffers: &[],
-    //     sample_count: 1,
-    //     sample_mask: !0,
-    //     alpha_to_coverage_enabled: false,
-    // });
+    void main() {
+        gl_Position = a_pos;
+    }
+    "#;
+
+    let fragment_source = r#"
+    #version 450
+
+    layout(binding = 0) uniform UBO {
+        vec4 color;
+    } ubo;
+    layout(location = 0) out vec4 o_color;
+
+    void main() {
+        o_color = ubo.color;
+    }
+    "#;
+
+    let mut compiler = shaderc::Compiler::new().unwrap();
+
+    let vertex_shader = compiler
+        .compile_into_spirv(
+            vertex_source,
+            shaderc::ShaderKind::Vertex,
+            "vertex_shader.glsl",
+            "main",
+            None,
+        )
+        .unwrap();
+
+    let fragment_shader = compiler
+        .compile_into_spirv(
+            fragment_source,
+            shaderc::ShaderKind::Fragment,
+            "fragment_shader.glsl",
+            "main",
+            None,
+        )
+        .unwrap();
+
+    let vs = include_bytes!("shader.vert.spv");
+    let vs_module =
+        device.create_shader_module(&wgpu::read_spirv(std::io::Cursor::new(&vs[..])).unwrap());
+
+    let fs = include_bytes!("shader.frag.spv");
+    let fs_module =
+        device.create_shader_module(&wgpu::read_spirv(std::io::Cursor::new(&fs[..])).unwrap());
+
+    let bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { bindings: &[] });
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        layout: &bind_group_layout,
+        bindings: &[],
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        bind_group_layouts: &[&bind_group_layout],
+    });
+
+    let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        layout: &pipeline_layout,
+        vertex_stage: wgpu::ProgrammableStageDescriptor {
+            module: &vs_module,
+            entry_point: "main",
+        },
+        fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+            module: &fs_module,
+            entry_point: "main",
+        }),
+        rasterization_state: Some(wgpu::RasterizationStateDescriptor {
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: wgpu::CullMode::None,
+            depth_bias: 0,
+            depth_bias_slope_scale: 0.0,
+            depth_bias_clamp: 0.0,
+        }),
+        primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+        color_states: &[wgpu::ColorStateDescriptor {
+            format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            color_blend: wgpu::BlendDescriptor::REPLACE,
+            alpha_blend: wgpu::BlendDescriptor::REPLACE,
+            write_mask: wgpu::ColorWrite::ALL,
+        }],
+        depth_stencil_state: None,
+        index_format: wgpu::IndexFormat::Uint16,
+        vertex_buffers: &[],
+        sample_count: 1,
+        sample_mask: !0,
+        alpha_to_coverage_enabled: false,
+    });
 
     let mut sc_descriptor = wgpu::SwapChainDescriptor {
         usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
@@ -116,12 +196,30 @@ fn main() {
         present_mode: wgpu::PresentMode::Vsync,
     };
 
+    let glyph = font.glyph('s');
+
     let mut swap_chain = device.create_swap_chain(&surface, &sc_descriptor);
 
+    let (cursor_vertex_data, cursor_index_data) = create_cursor();
+    let cursor_vertex_buffer = {
+        let mapped = device.create_buffer_mapped(
+            cursor_vertex_data.as_bytes().len(),
+            wgpu::BufferUsage::VERTEX,
+        );
+        mapped.data.copy_from_slice(cursor_vertex_data.as_bytes());
+        mapped.finish()
+    };
+    let cursor_index_buffer = {
+        let mapped = device
+            .create_buffer_mapped(cursor_index_data.as_bytes().len(), wgpu::BufferUsage::INDEX);
+        mapped.data.copy_from_slice(cursor_index_data.as_bytes());
+        mapped.finish()
+    };
+
     event_loop.run(move |event, _, control_flow| {
-        *control_flow = ControlFlow::Poll;
+        *control_flow = ControlFlow::Wait;
+
         match event {
-            event::Event::MainEventsCleared => window.request_redraw(),
             event::Event::WindowEvent {
                 event: event::WindowEvent::Resized(size),
                 ..
@@ -129,6 +227,7 @@ fn main() {
                 sc_descriptor.width = size.width;
                 sc_descriptor.height = size.height;
                 swap_chain = device.create_swap_chain(&surface, &sc_descriptor);
+                window.request_redraw();
             }
             event::Event::RedrawRequested(_) => {
                 let mut encoder =
@@ -193,10 +292,13 @@ fn main() {
                         }],
                         depth_stencil_attachment: None,
                     });
+                    render_pass.set_pipeline(&render_pipeline);
+                    render_pass.set_bind_group(0, &bind_group, &[]);
+                    render_pass.set_index_buffer(&cursor_index_buffer, 0);
+                    render_pass.set_vertex_buffers(0, &[(&cursor_vertex_buffer, 0)]);
                 }
 
                 queue.submit(&[encoder.finish()]);
-                *control_flow = ControlFlow::Wait;
             }
             event::Event::DeviceEvent {
                 event: event::DeviceEvent::Key(key),
@@ -205,7 +307,6 @@ fn main() {
                 if let Some(vk) = key.virtual_keycode {
                     match vk {
                         event::VirtualKeyCode::J => {
-                            log::info!("pressed J, requesting redraw");
                             buffer.move_down();
                             window.request_redraw();
                         }
