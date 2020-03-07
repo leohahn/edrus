@@ -1,6 +1,7 @@
 extern crate edrus;
 extern crate env_logger;
 extern crate log;
+extern crate nalgebra as na;
 extern crate rusttype;
 extern crate shaderc;
 extern crate wgpu;
@@ -8,34 +9,50 @@ extern crate wgpu_glyph;
 extern crate winit;
 extern crate zerocopy;
 
+use na::{Vector2, Vector4};
+use std::mem;
 use wgpu_glyph::{GlyphBrushBuilder, Scale, Section};
 use winit::{
     event,
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
-use zerocopy::AsBytes;
 
-#[derive(Debug, Clone, AsBytes)]
+// #[derive(Debug, Copy, Clone)]
+// #[repr(C)]
+// struct Vec2([f32; 2]);
+
+// impl Vec2 {
+//     fn new(x: f32, y: f32) -> Vec2 {
+//         Vec2([x, y])
+//     }
+// }
+
+// #[derive(Debug, Copy, Clone)]
+// #[repr(C)]
+// struct Vec4([f32; 4]);
+
+// impl Vec4 {
+//     fn new(x: f32, y: f32, z: f32, w: f32) -> Vec4 {
+//         Vec4([x, y, z, w])
+//     }
+// }
+
 #[repr(C)]
-struct Vec4([f32; 4]);
-
-impl Vec4 {
-    fn new(x: f32, y: f32, z: f32) -> Vec4 {
-        Vec4([x, y, z, 1.0])
-    }
+#[derive(Debug, Clone, Copy)]
+struct UBO {
+    color: Vector4<f32>,
 }
 
-fn create_cursor() -> (Vec<Vec4>, Vec<u16>) {
-    let vertex_data = [
-        Vec4::new(0.0, 0.0, 0.0),
-        Vec4::new(5.0, 0.0, 0.0),
-        Vec4::new(5.0, 5.0, 0.0),
-        Vec4::new(0.0, 5.0, 0.0),
-    ];
-
-    let index_data: &[u16] = &[0, 1, 2, 2, 3, 0];
-    (vertex_data.to_vec(), index_data.to_vec())
+fn create_cursor() -> Vec<Vector2<f32>> {
+    vec![
+        Vector2::new(-1.0, 0.0),
+        Vector2::new(1.0, 0.0),
+        Vector2::new(1.0, 1.0),
+        Vector2::new(1.0, 1.0),
+        Vector2::new(-1.0, 1.0),
+        Vector2::new(-1.0, 0.0),
+    ]
 }
 
 fn main() {
@@ -90,27 +107,33 @@ fn main() {
     let vertex_source = r#"
     #version 450
 
+    layout (location = 0) in vec2 a_pos;
+
+    layout (set = 0, binding = 0) uniform UBO {
+        mat4 u_projection;
+        mat4 u_model_view;
+    };
+
     out gl_PerVertex {
         vec4 gl_Position;
     };
 
-    layout(location = 0) in vec4 a_pos;
-
     void main() {
-        gl_Position = a_pos;
+        gl_Position = vec4(a_pos, 0.0, 1.0);
     }
     "#;
 
     let fragment_source = r#"
     #version 450
 
-    layout(binding = 0) uniform UBO {
-        vec4 color;
-    } ubo;
-    layout(location = 0) out vec4 o_color;
+    layout (set = 0, binding = 0) uniform UBO {
+        vec4 u_color;
+    };
+
+    layout (location = 0) out vec4 o_color;
 
     void main() {
-        o_color = ubo.color;
+        o_color = u_color;
     }
     "#;
 
@@ -124,7 +147,7 @@ fn main() {
             "main",
             None,
         )
-        .unwrap();
+        .expect("failed to compile vertex shader");
 
     let fragment_shader = compiler
         .compile_into_spirv(
@@ -134,30 +157,55 @@ fn main() {
             "main",
             None,
         )
-        .unwrap();
+        .expect("failed to compile fragment shader");
 
-    let vs = include_bytes!("shader.vert.spv");
-    let vs_module =
-        device.create_shader_module(&wgpu::read_spirv(std::io::Cursor::new(&vs[..])).unwrap());
+    // let vertex_shader = include_bytes!("shader.vert.spv");
+    let vs_module = device.create_shader_module(
+        &wgpu::read_spirv(std::io::Cursor::new(vertex_shader.as_binary_u8()))
+            .expect("failed to read vertex shader"),
+    );
 
-    let fs = include_bytes!("shader.frag.spv");
-    let fs_module =
-        device.create_shader_module(&wgpu::read_spirv(std::io::Cursor::new(&fs[..])).unwrap());
+    // let fragment_shader = include_bytes!("shader.frag.spv");
+    let fs_module = device.create_shader_module(
+        &wgpu::read_spirv(std::io::Cursor::new(fragment_shader.as_binary_u8()))
+            .expect("failed to read fragment shader"),
+    );
 
-    let bind_group_layout =
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { bindings: &[] });
+    let cursor_vertex_data = create_cursor();
+    let cursor_vertex_buffer = device
+        .create_buffer_mapped(cursor_vertex_data.len(), wgpu::BufferUsage::VERTEX)
+        .fill_from_slice(&cursor_vertex_data);
 
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        layout: &bind_group_layout,
-        bindings: &[],
+    let uniform_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            bindings: &[wgpu::BindGroupLayoutBinding {
+                binding: 0,
+                visibility: wgpu::ShaderStage::FRAGMENT,
+                ty: wgpu::BindingType::UniformBuffer { dynamic: false },
+            }],
+        });
+
+    let uniform_buffer_size = mem::size_of::<UBO>() as wgpu::BufferAddress;
+    let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        size: uniform_buffer_size,
+        usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
     });
 
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        bind_group_layouts: &[&bind_group_layout],
+    let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        layout: &uniform_bind_group_layout,
+        bindings: &[wgpu::Binding {
+            binding: 0,
+            resource: wgpu::BindingResource::Buffer {
+                buffer: &uniform_buffer,
+                range: 0..uniform_buffer_size,
+            },
+        }],
     });
 
     let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        layout: &pipeline_layout,
+        layout: &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            bind_group_layouts: &[&uniform_bind_group_layout],
+        }),
         vertex_stage: wgpu::ProgrammableStageDescriptor {
             module: &vs_module,
             entry_point: "main",
@@ -182,7 +230,15 @@ fn main() {
         }],
         depth_stencil_state: None,
         index_format: wgpu::IndexFormat::Uint16,
-        vertex_buffers: &[],
+        vertex_buffers: &[wgpu::VertexBufferDescriptor {
+            stride: mem::size_of::<Vector2<f32>>() as wgpu::BufferAddress,
+            step_mode: wgpu::InputStepMode::Vertex,
+            attributes: &[wgpu::VertexAttributeDescriptor {
+                offset: 0,
+                shader_location: 0,
+                format: wgpu::VertexFormat::Float2,
+            }],
+        }],
         sample_count: 1,
         sample_mask: !0,
         alpha_to_coverage_enabled: false,
@@ -196,25 +252,9 @@ fn main() {
         present_mode: wgpu::PresentMode::Vsync,
     };
 
-    let glyph = font.glyph('s');
+    // let glyph = font.glyph('s');
 
     let mut swap_chain = device.create_swap_chain(&surface, &sc_descriptor);
-
-    let (cursor_vertex_data, cursor_index_data) = create_cursor();
-    let cursor_vertex_buffer = {
-        let mapped = device.create_buffer_mapped(
-            cursor_vertex_data.as_bytes().len(),
-            wgpu::BufferUsage::VERTEX,
-        );
-        mapped.data.copy_from_slice(cursor_vertex_data.as_bytes());
-        mapped.finish()
-    };
-    let cursor_index_buffer = {
-        let mapped = device
-            .create_buffer_mapped(cursor_index_data.as_bytes().len(), wgpu::BufferUsage::INDEX);
-        mapped.data.copy_from_slice(cursor_index_data.as_bytes());
-        mapped.finish()
-    };
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -253,6 +293,43 @@ fn main() {
                         depth_stencil_attachment: None,
                     });
                 }
+                // Draw the cursor
+                {
+                    let ubo = UBO {
+                        color: Vector4::new(1.0, 0.0, 0.0, 1.0),
+                    };
+                    let temp_buf = device
+                        .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
+                        .fill_from_slice(&[ubo]);
+
+                    encoder.copy_buffer_to_buffer(
+                        &temp_buf,
+                        0,
+                        &uniform_buffer,
+                        0,
+                        mem::size_of::<UBO>() as wgpu::BufferAddress,
+                    );
+
+                    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                            attachment: &frame.view,
+                            resolve_target: None,
+                            load_op: wgpu::LoadOp::Load,
+                            store_op: wgpu::StoreOp::Store,
+                            clear_color: wgpu::Color {
+                                r: 0.01,
+                                g: 0.01,
+                                b: 0.01,
+                                a: 1.0,
+                            },
+                        }],
+                        depth_stencil_attachment: None,
+                    });
+                    render_pass.set_pipeline(&render_pipeline);
+                    render_pass.set_bind_group(0, &uniform_bind_group, &[]);
+                    render_pass.set_vertex_buffers(0, &[(&cursor_vertex_buffer, 0)]);
+                    render_pass.draw(0..cursor_vertex_data.len() as u32, 0..1);
+                }
 
                 glyph_brush.queue(Section {
                     text: buffer.contents(),
@@ -275,28 +352,6 @@ fn main() {
                         sc_descriptor.height,
                     )
                     .expect("Draw queued");
-
-                {
-                    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                            attachment: &frame.view,
-                            resolve_target: None,
-                            load_op: wgpu::LoadOp::Load,
-                            store_op: wgpu::StoreOp::Store,
-                            clear_color: wgpu::Color {
-                                r: 0.01,
-                                g: 0.01,
-                                b: 0.01,
-                                a: 1.0,
-                            },
-                        }],
-                        depth_stencil_attachment: None,
-                    });
-                    render_pass.set_pipeline(&render_pipeline);
-                    render_pass.set_bind_group(0, &bind_group, &[]);
-                    render_pass.set_index_buffer(&cursor_index_buffer, 0);
-                    render_pass.set_vertex_buffers(0, &[(&cursor_vertex_buffer, 0)]);
-                }
 
                 queue.submit(&[encoder.finish()]);
             }
