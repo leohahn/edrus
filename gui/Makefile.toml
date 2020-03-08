@@ -1,0 +1,7 @@
+[tasks.compile-shaders]
+script = [
+'''
+glslc.exe shaders/cursor/cursor.vert -o shaders/cursor/vertex.spirv
+glslc.exe shaders/cursor/cursor.frag -o shaders/cursor/fragment.spirv
+'''
+]
