@@ -6,10 +6,16 @@ pub struct Cursor {
     col: usize,
 }
 
+impl Cursor {
+    pub fn position(&self) -> usize {
+        self.pos
+    }
+}
+
 pub struct Buffer {
     piece_table: SimplePieceTable,
     contents: String,
-    cursor: Cursor,
+    pub cursor: Cursor,
 }
 
 impl Buffer {

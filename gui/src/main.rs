@@ -1,101 +1,140 @@
-extern crate cgmath;
 extern crate edrus;
 extern crate env_logger;
 extern crate log;
 extern crate nalgebra as na;
 extern crate rusttype;
 extern crate shaderc;
-extern crate wgpu;
-extern crate wgpu_glyph;
 extern crate winit;
-extern crate zerocopy;
 
-// use na::{Matrix3, Matrix4, Point3, Point4, Vector2, Vector3, Vector4};
+mod text;
+
+use na::{Matrix3, Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
+use std::collections::HashMap;
 use std::mem;
-use wgpu_glyph::{GlyphBrushBuilder, Scale, Section};
+use text::brush;
 use winit::{
     event,
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
 
-#[cfg_attr(rustfmt, rustfmt_skip)]
-pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
-    1.0, 0.0, 0.0, 0.0,
-    0.0, -1.0, 0.0, 0.0,
-    0.0, 0.0, 0.5, 0.0,
-    0.0, 0.0, 0.5, 1.0,
-);
-
-// #[derive(Debug, Copy, Clone)]
-// #[repr(C)]
-// struct Vec2([f32; 2]);
-
-// impl Vec2 {
-//     fn new(x: f32, y: f32) -> Vec2 {
-//         Vec2([x, y])
-//     }
-// }
-
-// #[derive(Debug, Copy, Clone)]
-// #[repr(C)]
-// struct Vec4([f32; 4]);
-
-// impl Vec4 {
-//     fn new(x: f32, y: f32, z: f32, w: f32) -> Vec4 {
-//         Vec4([x, y, z, w])
-//     }
-// }
-
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 struct UBO {
-    color: cgmath::Vector4<f32>,
+    color: Vector4<f32>,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 struct CoordinateUniformBuffer {
-    view_projection: cgmath::Matrix4<f32>,
-    model: cgmath::Matrix4<f32>,
+    view_projection: Matrix4<f32>,
+    model: Matrix4<f32>,
 }
 
-fn create_cursor(origin: (f32, f32)) -> Vec<cgmath::Vector2<f32>> {
-    let (xo, yo) = dbg!(origin);
-    let width = 100.0;
-    let height = 100.0;
-    dbg!(vec![
-        cgmath::Vector2::new(xo, yo),
-        cgmath::Vector2::new(xo + width, yo),
-        cgmath::Vector2::new(xo + width, yo + height),
-        cgmath::Vector2::new(xo + width, yo + height),
-        cgmath::Vector2::new(xo, yo + height),
-        cgmath::Vector2::new(xo, yo),
-    ])
+struct FontCache<'a> {
+    font: rusttype::Font<'static>,
+    hash: HashMap<char, rusttype::ScaledGlyph<'a>>,
+    scale: rusttype::Scale,
 }
 
-fn create_view_projection_matrix(
-    width: u32,
-    height: u32,
-    eye: cgmath::Point3<f32>,
-) -> cgmath::Matrix4<f32> {
-    dbg!(width);
-    dbg!(height);
-    // let target = eye + cgmath::Vector3::new(0.0, 0.0, -1.0);
-    // let eye = cgmath::Point3::new(0.0, 0.0, 1.0);
-    let target = eye - cgmath::Vector3::new(0.0, 0.0, 1.0);
-    // let view = cgmath::Matrix4::look_at_rh(&eye, &target, &cgmath::Vector3::new(0.0, 1.0, 0.0));
-    let view = cgmath::Matrix4::look_at(eye, target, cgmath::Vector3::new(0.0, 1.0, 0.0));
-    let projection = cgmath::ortho(
-        0.0,           // left
-        width as f32,  // right
-        height as f32, // bottom
-        0.0,           // top
-        0.1,           // znear
-        100.0,         // zfar
+impl<'a> FontCache<'a> {
+    fn new(scale: rusttype::Scale, font_bytes: &'static [u8]) -> Self {
+        let collection = rusttype::FontCollection::from_bytes(font_bytes).unwrap();
+        let font = collection.into_font().unwrap();
+        Self {
+            hash: HashMap::new(),
+            font: font,
+            scale: scale,
+        }
+    }
+
+    fn get_glyph(&mut self, c: char) -> &rusttype::ScaledGlyph<'a> {
+        let scale = self.scale.clone();
+        let entry = self
+            .hash
+            .entry(c)
+            .or_insert(self.font.glyph(c).scaled(scale));
+        entry
+    }
+
+    fn v_metrics(&self) -> rusttype::VMetrics {
+        self.font.v_metrics(self.scale)
+    }
+}
+
+struct VisualCursor {
+    position: Point2<f32>,
+}
+
+impl VisualCursor {
+    fn move_left(&mut self, font_cache: &mut FontCache, left_char: char) {
+        let left_glyph = font_cache.get_glyph(left_char);
+        let left_hmetrics = left_glyph.h_metrics();
+        self.position.x -= left_hmetrics.advance_width;
+    }
+
+    fn move_right(&mut self, font_cache: &mut FontCache, curr_char: char) {
+        let curr_glyph = font_cache.get_glyph(curr_char);
+        let curr_hmetrics = curr_glyph.h_metrics();
+        self.position.x += curr_hmetrics.advance_width;
+    }
+
+    fn move_down(&mut self, font_cache: &mut FontCache) {
+        let vmetrics = font_cache.v_metrics();
+        let vertical_offset = (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
+        self.position.y += vertical_offset;
+    }
+
+    fn move_up(&mut self, font_cache: &mut FontCache) {
+        let vmetrics = font_cache.v_metrics();
+        let vertical_offset = (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
+        self.position.y -= vertical_offset;
+    }
+
+    fn draw_cursor_for(&mut self, c: char) -> rusttype::Rect<f32> {
+        // TODO: implement this method.
+        unimplemented!()
+    }
+}
+
+fn create_cursor(origin: (f32, f32), view_proj: Matrix4<f32>) -> Vec<Vector2<f32>> {
+    let (xo, yo) = origin;
+    assert!(xo >= 0.0);
+    assert!(yo >= 0.0);
+
+    let width = 1.0;
+    let height = 1.0;
+    vec![
+        Vector2::new(xo, yo),
+        Vector2::new(xo + width, yo),
+        Vector2::new(xo + width, yo + height),
+        Vector2::new(xo + width, yo + height),
+        Vector2::new(xo, yo + height),
+        Vector2::new(xo, yo),
+    ]
+}
+
+fn create_view_projection_matrix(width: u32, height: u32, eye: Point3<f32>) -> Matrix4<f32> {
+    let target = eye + Vector3::new(0.0, 0.0, 1.0);
+    let view = na::Isometry3::look_at_rh(&eye, &target, &-Vector3::y());
+    let projection = na::Orthographic3::new(
+        0.0,              // left
+        width as f32,     // right
+        -(height as f32), // bottom
+        0.0,              // top
+        0.1,              // znear
+        100.0,            // zfar
     );
-    // opengl_to_wgpu_matrix() * projection * view
-    OPENGL_TO_WGPU_MATRIX * projection * view
+
+    #[cfg_attr(rustfmt, rustfmt_skip)]
+    let mx_correction: Matrix4<f32> = Matrix4::new(
+        1.0, 0.0, 0.0, 0.0,
+        0.0, -1.0, 0.0, 0.0,
+        0.0, 0.0, 0.5, 0.5,
+        0.0, 0.0, 0.0, 1.0,
+    );
+
+    mx_correction * projection.as_matrix() * view.to_homogeneous()
 }
 
 fn main() {
@@ -122,6 +161,7 @@ fn main() {
             .build(&event_loop)
             .unwrap();
         let size = window.inner_size();
+        println!("width={}, height={}", size.width, size.height);
         let surface = wgpu::Surface::create(&window);
         (window, size, surface)
     };
@@ -144,77 +184,35 @@ fn main() {
     let collection = rusttype::FontCollection::from_bytes(font_data).unwrap();
     let font = collection.into_font().unwrap();
 
-    let mut glyph_brush = GlyphBrushBuilder::using_font_bytes(font_data)
-        .build(&mut device, wgpu::TextureFormat::Bgra8UnormSrgb);
+    let mut glyph_brush = brush::BrushBuilder::using_font_bytes(font_data)
+        .expect("Load fonts")
+        .build(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
 
-    let vertex_source = r#"
-    #version 450
-
-    layout (location = 0) in vec2 a_pos;
-
-    layout (set = 0, binding = 1) uniform CoordinateUniformBuffer {
-        mat4 u_view_projection;
-        mat4 u_model;
-    };
-
-    out gl_PerVertex {
-        vec4 gl_Position;
-    };
-
-    void main() {
-        gl_Position = u_view_projection * u_model * vec4(a_pos, 0.0, 1.0);
-    }
-    "#;
-
-    let fragment_source = r#"
-    #version 450
-
-    layout (set = 0, binding = 0) uniform UBO {
-        vec4 u_color;
-    };
-
-    layout (location = 0) out vec4 o_color;
-
-    void main() {
-        o_color = u_color;
-    }
-    "#;
-
-    let mut compiler = shaderc::Compiler::new().unwrap();
-
-    let vertex_shader = compiler
-        .compile_into_spirv(
-            vertex_source,
-            shaderc::ShaderKind::Vertex,
-            "vertex_shader.glsl",
-            "main",
-            None,
-        )
-        .expect("failed to compile vertex shader");
-
-    let fragment_shader = compiler
-        .compile_into_spirv(
-            fragment_source,
-            shaderc::ShaderKind::Fragment,
-            "fragment_shader.glsl",
-            "main",
-            None,
-        )
-        .expect("failed to compile fragment shader");
-
-    // let vertex_shader = include_bytes!("shader.vert.spv");
+    let vertex_shader = include_bytes!("../shaders/cursor/vertex.spirv");
     let vs_module = device.create_shader_module(
-        &wgpu::read_spirv(std::io::Cursor::new(vertex_shader.as_binary_u8()))
+        &wgpu::read_spirv(std::io::Cursor::new(&vertex_shader[..]))
             .expect("failed to read vertex shader"),
     );
 
-    // let fragment_shader = include_bytes!("shader.frag.spv");
+    let fragment_shader = include_bytes!("../shaders/cursor/fragment.spirv");
     let fs_module = device.create_shader_module(
-        &wgpu::read_spirv(std::io::Cursor::new(fragment_shader.as_binary_u8()))
+        &wgpu::read_spirv(std::io::Cursor::new(&fragment_shader[..]))
             .expect("failed to read fragment shader"),
     );
 
-    let cursor_vertex_data = create_cursor((130.0, 130.0));
+    let mut sc_descriptor = wgpu::SwapChainDescriptor {
+        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+        format: wgpu::TextureFormat::Bgra8UnormSrgb,
+        width: size.width,
+        height: size.height,
+        present_mode: wgpu::PresentMode::Vsync,
+    };
+
+    let mut eye = Point3::new(0.0, 0.0, -5.0);
+    let mut view_projection_matrix =
+        create_view_projection_matrix(sc_descriptor.width, sc_descriptor.height, eye);
+
+    let cursor_vertex_data = create_cursor((0.0, 0.0), view_projection_matrix);
     let cursor_vertex_buffer = device
         .create_buffer_mapped(cursor_vertex_data.len(), wgpu::BufferUsage::VERTEX)
         .fill_from_slice(&cursor_vertex_data);
@@ -242,7 +240,7 @@ fn main() {
     });
 
     let coordinate_uniform_buffer_size =
-        dbg!(mem::size_of::<CoordinateUniformBuffer>() as wgpu::BufferAddress);
+        mem::size_of::<CoordinateUniformBuffer>() as wgpu::BufferAddress;
     let coordinate_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         size: coordinate_uniform_buffer_size,
         usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
@@ -297,7 +295,7 @@ fn main() {
         depth_stencil_state: None,
         index_format: wgpu::IndexFormat::Uint16,
         vertex_buffers: &[wgpu::VertexBufferDescriptor {
-            stride: mem::size_of::<cgmath::Vector2<f32>>() as wgpu::BufferAddress,
+            stride: mem::size_of::<Vector2<f32>>() as wgpu::BufferAddress,
             step_mode: wgpu::InputStepMode::Vertex,
             attributes: &[wgpu::VertexAttributeDescriptor {
                 offset: 0,
@@ -310,21 +308,11 @@ fn main() {
         alpha_to_coverage_enabled: false,
     });
 
-    let mut sc_descriptor = wgpu::SwapChainDescriptor {
-        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-        format: wgpu::TextureFormat::Bgra8UnormSrgb,
-        width: size.width,
-        height: size.height,
-        present_mode: wgpu::PresentMode::Vsync,
-    };
-
-    // let glyph = font.glyph('s');
-
     let mut swap_chain = device.create_swap_chain(&surface, &sc_descriptor);
 
-    let mut eye = cgmath::Point3::new(50.0, 50.0, 1.0);
-    let mut view_projection_matrix =
-        create_view_projection_matrix(sc_descriptor.width, sc_descriptor.height, dbg!(eye));
+    // let glyph = font.glyph('s');
+    let font_scale = brush::Scale { x: 16.0, y: 16.0 };
+    let font_cache = FontCache::new(font_scale, font_data);
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -367,10 +355,23 @@ fn main() {
                 }
                 // Draw the cursor before everything else, since it should be behind
                 // the text.
+
+                let contents = buffer.contents();
+                let current_char = contents.chars().nth(buffer.cursor.position()).unwrap();
+                let glyph = font.glyph(current_char).scaled(font_scale);
+
+                let bounding_box = glyph.exact_bounding_box().unwrap();
+                let cursor_start = Point2::new(0.0, 0.0);
+
+                println!(
+                    "current char is {} with bounding box {:?}",
+                    current_char, bounding_box
+                );
+
                 {
                     {
                         let ubo = UBO {
-                            color: cgmath::Vector4::new(1.0, 0.0, 0.0, 1.0),
+                            color: Vector4::new(1.0, 0.0, 0.0, 1.0),
                         };
                         let temp_buf = device
                             .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
@@ -385,11 +386,16 @@ fn main() {
                         );
                     }
                     {
-                        use cgmath::SquareMatrix;
+                        let mut model = Matrix4::new_translation(&Vector3::new(0.0, 0.0, 0.0));
+                        model.append_nonuniform_scaling_mut(&Vector3::new(
+                            bounding_box.width(),
+                            bounding_box.height(),
+                            1.0,
+                        ));
+
                         let coordinate_ubo = CoordinateUniformBuffer {
                             view_projection: view_projection_matrix,
-                            // view_projection: cgmath::Matrix4::identity(),
-                            model: cgmath::Matrix4::identity(),
+                            model: model,
                         };
                         let temp_buf = device
                             .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
@@ -424,28 +430,51 @@ fn main() {
                     render_pass.draw(0..cursor_vertex_data.len() as u32, 0..1);
                 }
 
-                glyph_brush.queue(Section {
-                    text: buffer.contents(),
-                    screen_position: (30.0, 30.0),
-                    color: [1.0, 1.0, 1.0, 1.0],
-                    scale: Scale { x: 15.0, y: 15.0 },
-                    //bounds: (size.width as f32, size.height as f32),
-                    ..Section::default()
-                });
+                // Render the text
+                {
+                    glyph_brush.queue(brush::Section {
+                        text: buffer.contents(),
+                        screen_position: (0.0, 0.0),
+                        color: [1.0, 1.0, 1.0, 1.0],
+                        scale: brush::Scale { x: 16.0, y: 16.0 },
+                        bounds: (sc_descriptor.width as f32, sc_descriptor.height as f32),
+                        ..brush::Section::default()
+                    });
+
+                    // Draw the text!
+                    glyph_brush
+                        .draw_queued_with_transform(
+                            &mut device,
+                            &mut encoder,
+                            &frame.view,
+                            view_projection_matrix,
+                        )
+                        .expect("Draw queued");
+                }
+
+                // glyph_brush.queue(Section {
+                //     text: buffer.contents(),
+                //     screen_position: (30.0, 30.0),
+                //     color: [1.0, 1.0, 1.0, 1.0],
+                //     scale: Scale { x: 15.0, y: 15.0 },
+                //     //bounds: (size.width as f32, size.height as f32),
+                //     ..Section::default()
+                // });
 
                 // Draw the text!
-                glyph_brush
-                    .draw_queued(
-                        &mut device,
-                        &mut encoder,
-                        &frame.view,
-                        // size.width.round() as u32,
-                        // size.height.round() as u32,
-                        sc_descriptor.width,
-                        sc_descriptor.height,
-                        // view_projection_matrix.into::<[[f32; 4]; 4]>(),
-                    )
-                    .expect("Draw queued");
+                // glyph_brush
+                //     .draw_queued_with_transform(
+                //         &mut device,
+                //         &mut encoder,
+                //         &frame.view,
+                //         // size.width.round() as u32,
+                //         // size.height.round() as u32,
+                //         // sc_descriptor.width,
+                //         // sc_descriptor.height,
+                //         // view_projection_matrix.into::<[[f32; 4]; 4]>(),
+                //         ortho,
+                //     )
+                //     .expect("Draw queued");
 
                 queue.submit(&[encoder.finish()]);
             }
@@ -460,7 +489,7 @@ fn main() {
                             window.request_redraw();
                         }
                         event::VirtualKeyCode::A => {
-                            eye += cgmath::Vector3::new(3.0, 0.0, 0.0);
+                            eye += Vector3::new(3.0, 0.0, 0.0);
                             view_projection_matrix = create_view_projection_matrix(
                                 sc_descriptor.width,
                                 sc_descriptor.height,
@@ -469,7 +498,7 @@ fn main() {
                             window.request_redraw();
                         }
                         event::VirtualKeyCode::D => {
-                            eye -= cgmath::Vector3::new(3.0, 0.0, 0.0);
+                            eye -= Vector3::new(3.0, 0.0, 0.0);
                             view_projection_matrix = create_view_projection_matrix(
                                 sc_descriptor.width,
                                 sc_descriptor.height,
@@ -491,13 +520,3 @@ fn main() {
         }
     });
 }
-
-// fn orthographic_projection(width: u32, height: u32) -> [f32; 16] {
-//     #[cfg_attr(rustfmt, rustfmt_skip)]
-//     [
-//         2.0 / width as f32, 0.0, 0.0, 0.0,
-//         0.0, 2.0 / height as f32, 0.0, 0.0,
-//         0.0, 0.0, 1.0, 0.0,
-//         -1.0, -1.0, 0.0, 1.0,
-//     ]
-// }
