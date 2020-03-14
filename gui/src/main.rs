@@ -3,15 +3,12 @@ extern crate env_logger;
 extern crate log;
 extern crate nalgebra as na;
 extern crate rusttype;
-extern crate shaderc;
 extern crate winit;
 
-mod text;
-
-use na::{Matrix3, Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
+use na::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
 use std::collections::HashMap;
 use std::mem;
-use text::brush;
+use wgpu_glyph::{GlyphBrushBuilder, Scale, Section};
 use winit::{
     event,
     event_loop::{ControlFlow, EventLoop},
@@ -202,7 +199,7 @@ fn main() {
     let collection = rusttype::FontCollection::from_bytes(font_data).unwrap();
     let font = collection.into_font().unwrap();
 
-    let mut glyph_brush = brush::BrushBuilder::using_font_bytes(font_data)
+    let mut glyph_brush = GlyphBrushBuilder::using_font_bytes(font_data)
         .expect("Load fonts")
         .build(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
 
@@ -329,7 +326,7 @@ fn main() {
     let mut swap_chain = device.create_swap_chain(&surface, &sc_descriptor);
 
     // let glyph = font.glyph('s');
-    let font_scale = brush::Scale { x: 16.0, y: 16.0 };
+    let font_scale = Scale { x: 16.0, y: 16.0 };
     let mut font_cache = FontCache::new(font_scale, font_data);
 
     event_loop.run(move |event, _, control_flow| {
@@ -443,14 +440,20 @@ fn main() {
 
                 // Render the text
                 {
-                    glyph_brush.queue(brush::Section {
+                    glyph_brush.queue(Section {
                         text: buffer.contents(),
                         screen_position: (0.0, 0.0),
                         color: [1.0, 1.0, 1.0, 1.0],
-                        scale: brush::Scale { x: 16.0, y: 16.0 },
+                        scale: Scale { x: 16.0, y: 16.0 },
                         bounds: (sc_descriptor.width as f32, sc_descriptor.height as f32),
-                        ..brush::Section::default()
+                        ..Section::default()
                     });
+
+                    let view_proj: [f32; 16] = {
+                        let mut arr: [f32; 16] = Default::default();
+                        arr.copy_from_slice(view_projection_matrix.as_slice());
+                        arr
+                    };
 
                     // Draw the text!
                     glyph_brush
@@ -458,7 +461,7 @@ fn main() {
                             &mut device,
                             &mut encoder,
                             &frame.view,
-                            view_projection_matrix,
+                            view_proj,
                         )
                         .expect("Draw queued");
                 }
