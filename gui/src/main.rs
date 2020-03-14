@@ -80,9 +80,13 @@ impl VisualCursor {
     }
 
     fn move_down(&mut self, font_cache: &mut FontCache) {
+        println!("==== Move Down ====");
+        println!("current position: {}", self.position);
         let vmetrics = font_cache.v_metrics();
         let vertical_offset = (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
         self.position.y += vertical_offset;
+        println!("new position: {}", self.position);
+        println!("===================");
     }
 
     fn move_up(&mut self, font_cache: &mut FontCache) {
@@ -91,27 +95,41 @@ impl VisualCursor {
         self.position.y -= vertical_offset;
     }
 
-    fn draw_cursor_for(&mut self, c: char) -> rusttype::Rect<f32> {
-        // TODO: implement this method.
-        unimplemented!()
+    fn draw_cursor_for(&mut self, font_cache: &mut FontCache, c: char) -> rusttype::Rect<f32> {
+        let mut rect = rusttype::Rect {
+            min: rusttype::point(self.position.x, self.position.y),
+            max: rusttype::point(self.position.x, self.position.y),
+        };
+
+        let vmetrics = font_cache.v_metrics();
+        let hmetrics = font_cache.get_glyph(c).h_metrics();
+        rect.max.x += hmetrics.advance_width;
+        rect.max.y += vmetrics.ascent - vmetrics.descent;
+
+        rect
     }
 }
 
-fn create_cursor(origin: (f32, f32), view_proj: Matrix4<f32>) -> Vec<Vector2<f32>> {
+fn create_cursor(origin: (f32, f32), view_proj: Matrix4<f32>) -> (VisualCursor, Vec<Vector2<f32>>) {
     let (xo, yo) = origin;
     assert!(xo >= 0.0);
     assert!(yo >= 0.0);
 
     let width = 1.0;
     let height = 1.0;
-    vec![
-        Vector2::new(xo, yo),
-        Vector2::new(xo + width, yo),
-        Vector2::new(xo + width, yo + height),
-        Vector2::new(xo + width, yo + height),
-        Vector2::new(xo, yo + height),
-        Vector2::new(xo, yo),
-    ]
+    (
+        VisualCursor {
+            position: Point2::new(xo, yo),
+        },
+        vec![
+            Vector2::new(xo, yo),
+            Vector2::new(xo + width, yo),
+            Vector2::new(xo + width, yo + height),
+            Vector2::new(xo + width, yo + height),
+            Vector2::new(xo, yo + height),
+            Vector2::new(xo, yo),
+        ],
+    )
 }
 
 fn create_view_projection_matrix(width: u32, height: u32, eye: Point3<f32>) -> Matrix4<f32> {
@@ -212,7 +230,7 @@ fn main() {
     let mut view_projection_matrix =
         create_view_projection_matrix(sc_descriptor.width, sc_descriptor.height, eye);
 
-    let cursor_vertex_data = create_cursor((0.0, 0.0), view_projection_matrix);
+    let (mut visual_cursor, cursor_vertex_data) = create_cursor((0.0, 0.0), view_projection_matrix);
     let cursor_vertex_buffer = device
         .create_buffer_mapped(cursor_vertex_data.len(), wgpu::BufferUsage::VERTEX)
         .fill_from_slice(&cursor_vertex_data);
@@ -312,7 +330,7 @@ fn main() {
 
     // let glyph = font.glyph('s');
     let font_scale = brush::Scale { x: 16.0, y: 16.0 };
-    let font_cache = FontCache::new(font_scale, font_data);
+    let mut font_cache = FontCache::new(font_scale, font_data);
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -355,19 +373,6 @@ fn main() {
                 }
                 // Draw the cursor before everything else, since it should be behind
                 // the text.
-
-                let contents = buffer.contents();
-                let current_char = contents.chars().nth(buffer.cursor.position()).unwrap();
-                let glyph = font.glyph(current_char).scaled(font_scale);
-
-                let bounding_box = glyph.exact_bounding_box().unwrap();
-                let cursor_start = Point2::new(0.0, 0.0);
-
-                println!(
-                    "current char is {} with bounding box {:?}",
-                    current_char, bounding_box
-                );
-
                 {
                     {
                         let ubo = UBO {
@@ -386,10 +391,16 @@ fn main() {
                         );
                     }
                     {
-                        let mut model = Matrix4::new_translation(&Vector3::new(0.0, 0.0, 0.0));
-                        model.append_nonuniform_scaling_mut(&Vector3::new(
-                            bounding_box.width(),
-                            bounding_box.height(),
+                        let cursor_rect =
+                            visual_cursor.draw_cursor_for(&mut font_cache, buffer.current_char());
+                        let mut model = Matrix4::new_translation(&Vector3::new(
+                            cursor_rect.min.x,
+                            cursor_rect.min.y,
+                            0.0,
+                        ));
+                        model.prepend_nonuniform_scaling_mut(&Vector3::new(
+                            cursor_rect.width(),
+                            cursor_rect.height(),
                             1.0,
                         ));
 
@@ -452,30 +463,6 @@ fn main() {
                         .expect("Draw queued");
                 }
 
-                // glyph_brush.queue(Section {
-                //     text: buffer.contents(),
-                //     screen_position: (30.0, 30.0),
-                //     color: [1.0, 1.0, 1.0, 1.0],
-                //     scale: Scale { x: 15.0, y: 15.0 },
-                //     //bounds: (size.width as f32, size.height as f32),
-                //     ..Section::default()
-                // });
-
-                // Draw the text!
-                // glyph_brush
-                //     .draw_queued_with_transform(
-                //         &mut device,
-                //         &mut encoder,
-                //         &frame.view,
-                //         // size.width.round() as u32,
-                //         // size.height.round() as u32,
-                //         // sc_descriptor.width,
-                //         // sc_descriptor.height,
-                //         // view_projection_matrix.into::<[[f32; 4]; 4]>(),
-                //         ortho,
-                //     )
-                //     .expect("Draw queued");
-
                 queue.submit(&[encoder.finish()]);
             }
             event::Event::DeviceEvent {
@@ -485,26 +472,42 @@ fn main() {
                 if let Some(vk) = key.virtual_keycode {
                     match vk {
                         event::VirtualKeyCode::J => {
-                            buffer.move_down();
-                            window.request_redraw();
+                            if key.state == event::ElementState::Pressed {
+                                buffer.move_down();
+                                visual_cursor.move_down(&mut font_cache);
+                                window.request_redraw();
+                            }
                         }
-                        event::VirtualKeyCode::A => {
-                            eye += Vector3::new(3.0, 0.0, 0.0);
-                            view_projection_matrix = create_view_projection_matrix(
-                                sc_descriptor.width,
-                                sc_descriptor.height,
-                                eye,
-                            );
-                            window.request_redraw();
+                        event::VirtualKeyCode::K => {
+                            if key.state == event::ElementState::Pressed {
+                                buffer.move_up();
+                                visual_cursor.move_up(&mut font_cache);
+                                window.request_redraw();
+                            }
                         }
-                        event::VirtualKeyCode::D => {
-                            eye -= Vector3::new(3.0, 0.0, 0.0);
-                            view_projection_matrix = create_view_projection_matrix(
-                                sc_descriptor.width,
-                                sc_descriptor.height,
-                                eye,
-                            );
-                            window.request_redraw();
+                        event::VirtualKeyCode::H => {
+                            if key.state == event::ElementState::Pressed {
+                                buffer.move_left();
+                                visual_cursor.move_left(&mut font_cache, buffer.current_char());
+                                view_projection_matrix = create_view_projection_matrix(
+                                    sc_descriptor.width,
+                                    sc_descriptor.height,
+                                    eye,
+                                );
+                                window.request_redraw();
+                            }
+                        }
+                        event::VirtualKeyCode::L => {
+                            if key.state == event::ElementState::Pressed {
+                                visual_cursor.move_right(&mut font_cache, buffer.current_char());
+                                buffer.move_right();
+                                view_projection_matrix = create_view_projection_matrix(
+                                    sc_descriptor.width,
+                                    sc_descriptor.height,
+                                    eye,
+                                );
+                                window.request_redraw();
+                            }
                         }
                         _ => {}
                     }
