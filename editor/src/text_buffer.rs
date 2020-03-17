@@ -4,6 +4,11 @@ pub trait TextBuffer {
     fn insert(&mut self, pos: usize, text: &str) -> Result<(), Error>;
     fn remove(&mut self, range: std::ops::Range<usize>) -> Result<(), Error>;
     fn contents(&self) -> String;
+
+    fn next(&self, offset: usize) -> Option<(char, usize)>;
+    fn prev(&self, offset: usize) -> Option<(char, usize)>;
+    fn below(&self, offset: usize) -> Option<(char, usize)>;
+    fn above(&self, offset: usize) -> Option<(char, usize)>;
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -27,6 +32,12 @@ pub struct SimplePieceTable {
     pieces: Vec<Piece>,
 }
 
+struct CurrentPiece {
+    len_until: usize,
+    index: usize,
+    piece: Piece,
+}
+
 impl SimplePieceTable {
     pub fn new(text: String) -> Self {
         let text_len = text.len();
@@ -41,11 +52,24 @@ impl SimplePieceTable {
         }
     }
 
+    fn find_prev_offset(offset: usize, buf: &str) -> usize {
+        let mut prev_offset = offset - 1;
+        while !buf.is_char_boundary(prev_offset) {
+            assert!(prev_offset > 0);
+            prev_offset -= 1;
+        }
+        prev_offset
+    }
+
+    fn get_buffer(&self, piece: &Piece) -> &str {
+        match piece.buffer {
+            Buffer::Original => &self.original,
+            Buffer::Added => &self.added,
+        }
+    }
+
     fn display_piece(&self, piece: &Piece) -> String {
-        let b: &str = match piece.buffer {
-            Buffer::Original => self.original.as_ref(),
-            Buffer::Added => self.added.as_ref(),
-        };
+        let b = self.get_buffer(piece);
         format!(
             "start={} len={} contents={}",
             piece.start,
@@ -53,9 +77,114 @@ impl SimplePieceTable {
             &b[piece.start..piece.start + piece.len]
         )
     }
+
+    fn get_current_piece(&self, offset: usize) -> Option<CurrentPiece> {
+        let mut total_offset = 0;
+        for (idx, piece) in self.pieces.iter().enumerate() {
+            total_offset += piece.len;
+            if total_offset > offset {
+                return Some(CurrentPiece {
+                    len_until: total_offset - piece.len,
+                    index: idx,
+                    piece: piece.clone(),
+                });
+            }
+        }
+        None
+    }
+}
+
+/// Given the inital byte of a UTF-8 codepoint, returns the number of
+/// bytes required to represent the codepoint.
+/// RFC reference : https://tools.ietf.org/html/rfc3629#section-4
+fn len_utf8_from_first_byte(b: u8) -> usize {
+    match b {
+        b if b < 0x80 => 1,
+        b if b < 0xe0 => 2,
+        b if b < 0xf0 => 3,
+        _ => 4,
+    }
 }
 
 impl TextBuffer for SimplePieceTable {
+    fn next(&self, offset: usize) -> Option<(char, usize)> {
+        let current_piece = self.get_current_piece(offset)?;
+        let piece_offset = offset - current_piece.len_until;
+        let buffer = self.get_buffer(&current_piece.piece);
+
+        assert!(buffer.is_char_boundary(current_piece.piece.start + piece_offset));
+
+        let current_char_len =
+            len_utf8_from_first_byte(buffer.as_bytes()[current_piece.piece.start + piece_offset]);
+        let next_piece_offset = piece_offset + current_char_len;
+
+        assert!(next_piece_offset <= current_piece.piece.len);
+        if next_piece_offset == current_piece.piece.len {
+            // The next char is at the beggining of the next piece.
+            return self
+                .pieces
+                .get(current_piece.index + 1)
+                .and_then(|next_piece| {
+                    let buffer = self.get_buffer(next_piece);
+                    let c = &buffer[next_piece.start..].chars().next()?;
+                    Some((*c, current_piece.len_until + next_piece_offset))
+                });
+        }
+
+        let next_char = &buffer[current_piece.piece.start + next_piece_offset..]
+            .chars()
+            .next()?;
+
+        Some((*next_char, current_piece.len_until + next_piece_offset))
+    }
+
+    fn prev(&self, offset: usize) -> Option<(char, usize)> {
+        let current_piece = self.get_current_piece(offset)?;
+        let piece_offset = offset - current_piece.len_until;
+        let buffer = self.get_buffer(&current_piece.piece);
+
+        assert!(buffer.is_char_boundary(current_piece.piece.start + piece_offset));
+
+        if piece_offset == 0 {
+            // The previous character is on the prvious piece.
+            if current_piece.index == 0 {
+                return None;
+            }
+
+            return self
+                .pieces
+                .get(current_piece.index - 1)
+                .and_then(|prev_piece| {
+                    let buffer = self.get_buffer(prev_piece);
+                    let prev_offset = SimplePieceTable::find_prev_offset(
+                        prev_piece.len,
+                        &buffer[prev_piece.start..],
+                    );
+                    let c = &buffer[prev_piece.start + prev_offset..].chars().next()?;
+                    Some((*c, current_piece.len_until - (prev_piece.len - prev_offset)))
+                });
+        }
+
+        let prev_piece_offset =
+            SimplePieceTable::find_prev_offset(piece_offset, &buffer[current_piece.piece.start..]);
+
+        let prev_char = &buffer[current_piece.piece.start + prev_piece_offset..]
+            .chars()
+            .next()?;
+
+        Some((*prev_char, current_piece.len_until + prev_piece_offset))
+    }
+
+    fn below(&self, offset: usize) -> Option<(char, usize)> {
+        let current_piece = self.get_current_piece(offset)?;
+
+        None
+    }
+
+    fn above(&self, index: usize) -> Option<(char, usize)> {
+        None
+    }
+
     fn insert(&mut self, pos: usize, text: &str) -> Result<(), Error> {
         let added_start = self.added.len();
         self.added.push_str(text);
@@ -77,7 +206,6 @@ impl TextBuffer for SimplePieceTable {
 
             // Insert at the beggining of the piece.
             if pos == start_piece_pos {
-                println!("BEGIN");
                 // We insert at the start of the piece, therefore
                 // we create a new piece before it.
                 insert_pieces.push((index, new_piece));
@@ -86,7 +214,6 @@ impl TextBuffer for SimplePieceTable {
 
             // Insert at the end of the piece.
             if end_piece_pos == pos {
-                println!("END");
                 insert_pieces.push((index + 1, new_piece));
                 break;
             }
@@ -105,30 +232,17 @@ impl TextBuffer for SimplePieceTable {
 
             let diff_end = end_piece_pos - pos;
 
-            println!(
-                "MIDDLE: end={} pos={}, diff={}",
-                end_piece_pos, pos, diff_end
-            );
-
             let piece_before = Piece {
                 buffer: piece.buffer,
                 start: piece.start,
                 len: piece.len - diff_end,
             };
 
-            println!("CURRENT PIECE: {}", self.display_piece(&piece));
-
-            println!("PIECE BEFORE: {}", self.display_piece(&piece_before));
-
             let piece_after = Piece {
                 buffer: piece.buffer,
                 start: piece_before.start + piece_before.len,
                 len: diff_end,
             };
-
-            println!("PIECE NEW: {}", self.display_piece(&new_piece));
-
-            println!("PIECE AFTER: {}", self.display_piece(&piece_after));
 
             remove_indexes.push(index);
             insert_pieces.push((index, piece_after));
@@ -298,5 +412,171 @@ mod test {
             table.contents(),
             "the dog, and not the cat, is an awesome alpaca. He is 13 years old."
         );
+    }
+
+    #[test]
+    fn next() {
+        let text = "the dog";
+        let mut table = SimplePieceTable::new(text.to_owned());
+        assert_eq!(table.contents(), text);
+
+        table.insert(0, "Carl, ").unwrap();
+        assert_eq!(table.contents(), "Carl, the dog");
+
+        {
+            let (c, idx) = table.next(3).expect("should not fail");
+            assert_eq!((c, idx), (',', 4));
+
+            let (c, idx) = table.next(4).expect("should not fail");
+            assert_eq!((c, idx), (' ', 5));
+
+            let (c, idx) = table.next(5).expect("should not fail");
+            assert_eq!((c, idx), ('t', 6));
+
+            let (c, idx) = table.next(6).expect("should not fail");
+            assert_eq!((c, idx), ('h', 7));
+
+            let (c, idx) = table.next(7).expect("should not fail");
+            assert_eq!((c, idx), ('e', 8));
+
+            let (c, idx) = table.next(8).expect("should not fail");
+            assert_eq!((c, idx), (' ', 9));
+
+            let (c, idx) = table.next(9).expect("should not fail");
+            assert_eq!((c, idx), ('d', 10));
+
+            let (c, idx) = table.next(10).expect("should not fail");
+            assert_eq!((c, idx), ('o', 11));
+
+            let (c, idx) = table.next(11).expect("should not fail");
+            assert_eq!((c, idx), ('g', 12));
+        }
+
+        table.insert(6, "cartão ótimo, ").unwrap();
+        assert_eq!(table.contents(), "Carl, cartão ótimo, the dog");
+
+        {
+            let (c, idx) = table.next(4).expect("should not fail");
+            assert_eq!((c, idx), (' ', 5));
+
+            let (c, idx) = table.next(5).expect("should not fail");
+            assert_eq!((c, idx), ('c', 6));
+
+            let (c, idx) = table.next(6).expect("should not fail");
+            assert_eq!((c, idx), ('a', 7));
+
+            let (c, idx) = table.next(7).expect("should not fail");
+            assert_eq!((c, idx), ('r', 8));
+
+            let (c, idx) = table.next(8).expect("should not fail");
+            assert_eq!((c, idx), ('t', 9));
+
+            let (c, idx) = table.next(9).expect("should not fail");
+            assert_eq!((c, idx), ('ã', 10));
+
+            let (c, idx) = table.next(10).expect("should not fail");
+            assert_eq!((c, idx), ('o', 12));
+
+            let (c, idx) = table.next(12).expect("should not fail");
+            assert_eq!((c, idx), (' ', 13));
+
+            let (c, idx) = table.next(13).expect("should not fail");
+            assert_eq!((c, idx), ('ó', 14));
+
+            let (c, idx) = table.next(14).expect("should not fail");
+            assert_eq!((c, idx), ('t', 16));
+
+            let (c, idx) = table.next(16).expect("should not fail");
+            assert_eq!((c, idx), ('i', 17));
+
+            let (c, idx) = table.next(17).expect("should not fail");
+            assert_eq!((c, idx), ('m', 18));
+
+            let (c, idx) = table.next(18).expect("should not fail");
+            assert_eq!((c, idx), ('o', 19));
+        }
+    }
+
+    #[test]
+    fn prev() {
+        let text = "the dog";
+        let mut table = SimplePieceTable::new(text.to_owned());
+        assert_eq!(table.contents(), text);
+
+        table.insert(0, "Carl, ").unwrap();
+        assert_eq!(table.contents(), "Carl, the dog");
+
+        {
+            let (c, idx) = table.prev(12).expect("should not fail");
+            assert_eq!((c, idx), ('o', 11));
+
+            let (c, idx) = table.prev(11).expect("should not fail");
+            assert_eq!((c, idx), ('d', 10));
+
+            let (c, idx) = table.prev(10).expect("should not fail");
+            assert_eq!((c, idx), (' ', 9));
+
+            let (c, idx) = table.prev(9).expect("should not fail");
+            assert_eq!((c, idx), ('e', 8));
+
+            let (c, idx) = table.prev(8).expect("should not fail");
+            assert_eq!((c, idx), ('h', 7));
+
+            let (c, idx) = table.prev(7).expect("should not fail");
+            assert_eq!((c, idx), ('t', 6));
+
+            let (c, idx) = table.prev(6).expect("should not fail");
+            assert_eq!((c, idx), (' ', 5));
+
+            let (c, idx) = table.prev(5).expect("should not fail");
+            assert_eq!((c, idx), (',', 4));
+
+            let (c, idx) = table.prev(4).expect("should not fail");
+            assert_eq!((c, idx), ('l', 3));
+        }
+
+        table.insert(6, "cartão ótimo, ").unwrap();
+        assert_eq!(table.contents(), "Carl, cartão ótimo, the dog");
+
+        {
+            let (c, idx) = table.prev(19).expect("should not fail");
+            assert_eq!((c, idx), ('m', 18));
+
+            let (c, idx) = table.prev(18).expect("should not fail");
+            assert_eq!((c, idx), ('i', 17));
+
+            let (c, idx) = table.prev(17).expect("should not fail");
+            assert_eq!((c, idx), ('t', 16));
+
+            let (c, idx) = table.prev(16).expect("should not fail");
+            assert_eq!((c, idx), ('ó', 14));
+
+            let (c, idx) = table.prev(14).expect("should not fail");
+            assert_eq!((c, idx), (' ', 13));
+
+            let (c, idx) = table.prev(13).expect("should not fail");
+            assert_eq!((c, idx), ('o', 12));
+
+            let (c, idx) = table.prev(12).expect("should not fail");
+            assert_eq!((c, idx), ('ã', 10));
+
+            let (c, idx) = table.prev(10).expect("should not fail");
+            assert_eq!((c, idx), ('t', 9));
+
+            let (c, idx) = table.prev(9).expect("should not fail");
+            assert_eq!((c, idx), ('r', 8));
+
+            let (c, idx) = table.prev(8).expect("should not fail");
+            assert_eq!((c, idx), ('a', 7));
+
+            let (c, idx) = table.prev(7).expect("should not fail");
+            assert_eq!((c, idx), ('c', 6));
+
+            let (c, idx) = table.prev(6).expect("should not fail");
+            assert_eq!((c, idx), (' ', 5));
+
+            let (c, idx) = table.prev(5).expect("should not fail");
+            assert_eq!((c, idx), (',', 4));
+        }
     }
 }
