@@ -41,10 +41,12 @@ impl Buffer {
     pub fn move_left(&mut self) {
         println!("===== move_left =====");
         println!("prev char: {}", self.current_char());
-        self.contents.chars().nth(self.cursor.pos - 1).map(|_| {
-            self.cursor.pos -= 1;
+        let (sub, _) = self.contents.split_at(self.cursor.pos);
+        if let Some(index) = sub.rfind(|c| c != '\n' && c != '\t' && c != '\r') {
+            self.cursor.pos -= index;
             self.cursor.col -= 1;
-        });
+        }
+
         println!("next char: {}", self.current_char());
         println!("=====================");
     }
@@ -52,10 +54,17 @@ impl Buffer {
     pub fn move_right(&mut self) {
         println!("===== move_right =====");
         println!("prev char: {}", self.current_char());
-        self.contents.chars().nth(self.cursor.pos + 1).map(|_| {
-            self.cursor.pos += 1;
-            self.cursor.col += 1;
-        });
+
+        self.contents
+            .chars()
+            .skip(self.cursor.pos + 1)
+            .skip_while(|c| *c == '\n' || *c == '\r' || *c == '\t')
+            .nth(0)
+            .map(|_| {
+                self.cursor.pos += 1;
+                self.cursor.col += 1;
+            });
+
         println!("next char: {}", self.current_char());
         println!("=====================");
     }
@@ -70,7 +79,7 @@ impl Buffer {
             .enumerate()
             .skip(self.cursor.pos)
             .skip_while(|(_, c)| *c != '\n')
-            .skip(self.cursor.col)
+            .skip(self.cursor.col + 1)
             .nth(0)
         {
             self.cursor.pos = pos.0;

@@ -9,3 +9,4 @@ name = "edrus"
 path = "src/lib.rs"
 
 [dependencies]
+memchr = "2.3.3"
