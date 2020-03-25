@@ -320,7 +320,62 @@ impl TextBuffer for SimplePieceTable {
         }
     }
 
-    fn next_line(&self, index: usize) -> Option<usize> {
+    fn next_line(&self, offset: usize) -> Option<usize> {
+        let current_piece = self.get_current_piece(offset)?;
+        let piece_offset = offset - current_piece.len_until;
+
+        let prev_lines = self.scan_lines(-1, current_piece.index, piece_offset);
+        let next_lines = self.scan_lines(1, current_piece.index, piece_offset);
+
+        if next_lines.is_empty() {
+            return None;
+        }
+
+        let current_col = if prev_lines.is_empty() {
+            // The current line is the first line.
+            offset
+        } else {
+            let (prev_line_index, prev_line_offset) = prev_lines[0];
+            let abs_offset = self.get_absolute_offset(prev_line_index, prev_line_offset);
+            offset - abs_offset
+        };
+
+        assert!(next_lines.len() == 1);
+        let (next_line_index, next_line_offset) = next_lines[0];
+
+        let mut correct_offset = next_line_offset + current_col + 1;
+
+        for (i, piece) in self.pieces.iter().enumerate().skip(next_line_index) {
+            let start_offset = if i == next_line_index {
+                next_line_offset + 1
+            } else {
+                0
+            };
+
+            if correct_offset >= piece.len {
+                correct_offset -= piece.len;
+            }
+
+            let buffer = self.get_buffer(piece);
+            let piece_slice =
+                &buffer.as_bytes()[piece.start + start_offset..piece.start + piece.len];
+
+            // Try to find a newline or the current column.
+            if let Some(newline) = memchr('\n' as u8, piece_slice) {
+                let max_col_offset = newline - 1;
+                if max_col_offset < correct_offset {
+                    let abs = self.get_absolute_offset(i, max_col_offset);
+                    return Some(abs);
+                } else {
+                    let abs = self.get_absolute_offset(i, correct_offset);
+                    return Some(abs);
+                }
+            } else if correct_offset < piece.len {
+                let abs = self.get_absolute_offset(i, correct_offset);
+                return Some(abs);
+            }
+        }
+
         None
     }
 
