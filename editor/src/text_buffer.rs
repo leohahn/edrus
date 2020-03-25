@@ -289,13 +289,13 @@ impl TextBuffer for SimplePieceTable {
             Some(current_col.min(first_newline_offset - 1))
         } else {
             let (second_piece_index, second_newline_offset) = lines[1];
-            let mut current_piece_index = dbg!(second_piece_index);
-            let mut current_piece = &self.pieces[second_piece_index];
+            let current_piece = &self.pieces[second_piece_index];
 
             if second_piece_index == first_newline_offset {
                 return Some(current_col.min(first_newline_offset - second_newline_offset - 1));
-            } else if second_piece_index < first_newline_offset {
-                let mut correct_offset = dbg!(second_newline_offset + current_col);
+            }
+            if second_piece_index < first_newline_offset {
+                let mut correct_offset = dbg!(second_newline_offset + current_col + 1);
                 for (i, piece) in self
                     .pieces
                     .iter()
@@ -314,11 +314,9 @@ impl TextBuffer for SimplePieceTable {
                     }
                     correct_offset -= current_piece.len;
                 }
-            } else {
-                unreachable!();
             }
 
-            None
+            unreachable!()
         }
     }
 
@@ -547,7 +545,6 @@ mod test {
             "the dog, and not the cat, is an awesome . He is 13 years old."
         );
 
-        println!("================================");
         table.insert(40, "alpaca").unwrap();
         assert_eq!(
             table.contents(),
@@ -782,19 +779,33 @@ mod test {
         // "#;
 
         {
-            let idx = table.prev_line(8).expect("should not fail");
             assert_eq!(table.char_at(8), Some('c'));
+            let idx = table.prev_line(8).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('t', 0));
         }
         {
-            let idx = table.prev_line(12).expect("should not fail");
             assert_eq!(table.char_at(12), Some(' '));
+            let idx = table.prev_line(12).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('d', 4));
         }
         {
-            let idx = table.prev_line(32).expect("should not fail");
             assert_eq!(table.char_at(32), Some('r'));
+            let idx = table.prev_line(32).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('g', 15));
+        }
+        {
+            assert_eq!(table.char_at(21), Some('e'));
+            let idx = table.prev_line(21).expect("should not fail");
+            assert_eq!((table.char_at(idx).unwrap(), idx), (' ', 12));
+        }
+        {
+            assert_eq!(table.char_at(3), Some(' '));
+            assert_eq!(table.prev_line(3), None);
+        }
+        {
+            assert_eq!(table.char_at(15), Some('g'));
+            let idx = table.prev_line(15).expect("should not fail");
+            assert_eq!((table.char_at(idx).unwrap(), idx), ('g', 6));
         }
     }
 }
