@@ -35,75 +35,49 @@ impl Buffer {
     }
 
     pub fn current_char(&self) -> char {
-        self.contents.chars().nth(self.cursor.pos).unwrap()
-    }
-
-    pub fn move_left(&mut self) {
-        println!("===== move_left =====");
-        println!("prev char: {}", self.current_char());
-        let (sub, _) = self.contents.split_at(self.cursor.pos);
-        if let Some(index) = sub.rfind(|c| c != '\n' && c != '\t' && c != '\r') {
-            self.cursor.pos -= index;
-            self.cursor.col -= 1;
-        }
-
-        println!("next char: {}", self.current_char());
-        println!("=====================");
-    }
-
-    pub fn move_right(&mut self) {
-        println!("===== move_right =====");
-        println!("prev char: {}", self.current_char());
-
-        self.contents
+        self.contents[self.cursor.pos..]
             .chars()
-            .skip(self.cursor.pos + 1)
-            .skip_while(|c| *c == '\n' || *c == '\r' || *c == '\t')
-            .nth(0)
-            .map(|_| {
-                self.cursor.pos += 1;
-                self.cursor.col += 1;
-            });
-
-        println!("next char: {}", self.current_char());
-        println!("=====================");
+            .next()
+            .expect("should not fail")
     }
 
-    pub fn move_down(&mut self) {
-        // FIXME: this is slow.
-        println!("===== move_down =====");
-        println!("prev char: {}", self.current_char());
-        if let Some(pos) = self
-            .contents
-            .chars()
-            .enumerate()
-            .skip(self.cursor.pos)
-            .skip_while(|(_, c)| *c != '\n')
-            .skip(self.cursor.col + 1)
-            .nth(0)
-        {
-            self.cursor.pos = pos.0;
-        }
-        println!("next char: {}", self.current_char());
-        println!("=====================");
+    pub fn move_left(&mut self) -> Option<()> {
+        self.piece_table.prev(self.cursor.pos).map(|offset| {
+            println!("===== move_left =====");
+            println!("prev char: {}", self.current_char());
+            self.cursor.pos = offset;
+            println!("next char: {}", self.current_char());
+            println!("=====================");
+        })
     }
 
-    pub fn move_up(&mut self) {
-        // FIXME: this is slow.
-        println!("===== move_up =====");
-        println!("prev char: {}", self.current_char());
+    pub fn move_right(&mut self) -> Option<()> {
+        self.piece_table.next(self.cursor.pos).map(|offset| {
+            println!("===== move_right =====");
+            println!("prev char: {}", self.current_char());
+            self.cursor.pos = offset;
+            println!("next char: {}", self.current_char());
+            println!("=====================");
+        })
+    }
 
-        let (before_cursor, _) = self.contents.split_at(self.cursor.pos);
-        if let Some(init_previous_line) = before_cursor
-            .rfind('\n')
-            .map(|index| self.contents.split_at(index))
-            .and_then(|(s, _)| s.rfind('\n'))
-            .map(|i| i + 1)
-        {
-            self.cursor.pos = init_previous_line + self.cursor.col;
-        }
+    pub fn move_down(&mut self) -> Option<()> {
+        self.piece_table.next_line(self.cursor.pos).map(|offset| {
+            println!("===== move_down =====");
+            println!("prev char: {}", self.current_char());
+            self.cursor.pos = offset;
+            println!("next char: {}", self.current_char());
+            println!("=====================");
+        })
+    }
 
-        println!("next char: {}", self.current_char());
-        println!("=====================");
+    pub fn move_up(&mut self) -> Option<()> {
+        self.piece_table.prev_line(self.cursor.pos).map(|offset| {
+            println!("===== move_up =====");
+            println!("prev char: {}", self.current_char());
+            self.cursor.pos = offset;
+            println!("next char: {}", self.current_char());
+            println!("=====================");
+        })
     }
 }

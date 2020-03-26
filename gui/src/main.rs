@@ -77,13 +77,9 @@ impl VisualCursor {
     }
 
     fn move_down(&mut self, font_cache: &mut FontCache) {
-        println!("==== Move Down ====");
-        println!("current position: {}", self.position);
         let vmetrics = font_cache.v_metrics();
         let vertical_offset = (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
         self.position.y += vertical_offset;
-        println!("new position: {}", self.position);
-        println!("===================");
     }
 
     fn move_up(&mut self, font_cache: &mut FontCache) {
@@ -476,40 +472,45 @@ fn main() {
                     match vk {
                         event::VirtualKeyCode::J => {
                             if key.state == event::ElementState::Pressed {
-                                buffer.move_down();
-                                visual_cursor.move_down(&mut font_cache);
-                                window.request_redraw();
+                                buffer.move_down().map(|_| {
+                                    visual_cursor.move_down(&mut font_cache);
+                                    window.request_redraw();
+                                });
                             }
                         }
                         event::VirtualKeyCode::K => {
                             if key.state == event::ElementState::Pressed {
-                                buffer.move_up();
-                                visual_cursor.move_up(&mut font_cache);
-                                window.request_redraw();
+                                buffer.move_up().map(|_| {
+                                    visual_cursor.move_up(&mut font_cache);
+                                    window.request_redraw();
+                                });
                             }
                         }
                         event::VirtualKeyCode::H => {
                             if key.state == event::ElementState::Pressed {
-                                buffer.move_left();
-                                visual_cursor.move_left(&mut font_cache, buffer.current_char());
-                                view_projection_matrix = create_view_projection_matrix(
-                                    sc_descriptor.width,
-                                    sc_descriptor.height,
-                                    eye,
-                                );
-                                window.request_redraw();
+                                buffer.move_left().map(|_| {
+                                    visual_cursor.move_left(&mut font_cache, buffer.current_char());
+                                    // view_projection_matrix = create_view_projection_matrix(
+                                    //     sc_descriptor.width,
+                                    //     sc_descriptor.height,
+                                    //     eye,
+                                    // );
+                                    window.request_redraw();
+                                });
                             }
                         }
                         event::VirtualKeyCode::L => {
                             if key.state == event::ElementState::Pressed {
-                                visual_cursor.move_right(&mut font_cache, buffer.current_char());
-                                buffer.move_right();
-                                view_projection_matrix = create_view_projection_matrix(
-                                    sc_descriptor.width,
-                                    sc_descriptor.height,
-                                    eye,
-                                );
-                                window.request_redraw();
+                                buffer.move_right().map(|_| {
+                                    visual_cursor
+                                        .move_right(&mut font_cache, buffer.current_char());
+                                    window.request_redraw();
+                                });
+                                // view_projection_matrix = create_view_projection_matrix(
+                                //     sc_descriptor.width,
+                                //     sc_descriptor.height,
+                                //     eye,
+                                // );
                             }
                         }
                         _ => {}

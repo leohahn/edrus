@@ -219,7 +219,27 @@ impl TextBuffer for SimplePieceTable {
 
         let current_char_len =
             len_utf8_from_first_byte(buffer.as_bytes()[current_piece.piece.start + piece_offset]);
+
         let next_piece_offset = piece_offset + current_char_len;
+
+        if next_piece_offset >= current_piece.piece.len {
+            // Next piece offset is either on the next piece or outside of the file.
+            return self
+                .pieces
+                .get(current_piece.index + 1)
+                .and_then(|next_piece| {
+                    let buffer = self.get_buffer(next_piece);
+                    if buffer.as_bytes()[next_piece.start] == '\n' as u8 {
+                        None
+                    } else {
+                        Some(current_piece.len_until + next_piece_offset)
+                    }
+                });
+        }
+
+        if buffer.as_bytes()[current_piece.piece.start + next_piece_offset] == '\n' as u8 {
+            return None;
+        }
 
         assert!(next_piece_offset <= current_piece.piece.len);
         Some(current_piece.len_until + next_piece_offset)
@@ -247,14 +267,23 @@ impl TextBuffer for SimplePieceTable {
                         prev_piece.len,
                         &buffer[prev_piece.start..],
                     );
-                    Some(current_piece.len_until - (prev_piece.len - prev_offset))
+
+                    if buffer.as_bytes()[prev_piece.start + prev_offset] == '\n' as u8 {
+                        None
+                    } else {
+                        Some(current_piece.len_until - (prev_piece.len - prev_offset))
+                    }
                 });
         }
 
         let prev_piece_offset =
             SimplePieceTable::find_prev_offset(piece_offset, &buffer[current_piece.piece.start..]);
 
-        Some(current_piece.len_until + prev_piece_offset)
+        if buffer.as_bytes()[current_piece.piece.start + prev_piece_offset] == '\n' as u8 {
+            None
+        } else {
+            Some(current_piece.len_until + prev_piece_offset)
+        }
     }
 
     fn prev_line(&self, offset: usize) -> Option<usize> {
@@ -702,6 +731,14 @@ mod test {
             let idx = table.next(18).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('o', 19));
         }
+
+        table.insert(29, "\n:)").unwrap();
+        assert_eq!(table.contents(), "Carl, cartão ótimo, the dog\n:)");
+
+        {
+            assert_eq!(table.char_at(28).unwrap(), 'g');
+            assert_eq!(table.next(28), None);
+        }
     }
 
     #[test]
@@ -784,6 +821,14 @@ mod test {
 
             let idx = table.prev(5).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), (',', 4));
+        }
+
+        table.insert(29, "\n:)").unwrap();
+        assert_eq!(table.contents(), "Carl, cartão ótimo, the dog\n:)");
+
+        {
+            assert_eq!(table.char_at(30).unwrap(), ':');
+            assert_eq!(table.prev(30), None);
         }
     }
 
