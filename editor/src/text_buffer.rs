@@ -41,6 +41,7 @@ pub struct SimplePieceTable {
     pieces: Vec<Piece>,
 }
 
+#[derive(Debug)]
 struct CurrentPiece {
     len_until: usize,
     index: usize,
@@ -155,18 +156,21 @@ impl SimplePieceTable {
                 }
             }
         } else {
-            for (index, piece) in self.pieces.iter().skip(piece_index).enumerate() {
+            for (index, piece) in self.pieces.iter().enumerate().skip(piece_index) {
                 let start_offset = if first_call {
                     first_call = false;
                     piece_offset
                 } else {
-                    piece.start
+                    0
                 };
+
+                let piece_start = piece.start + start_offset;
                 let buffer = self.get_buffer(piece);
                 let slice =
-                    &buffer.as_bytes()[start_offset..start_offset + (piece.len - start_offset)];
+                    &buffer.as_bytes()[piece_start..piece_start + (piece.len - start_offset)];
+
                 if let Some(line_offset) = memchr('\n' as u8, slice) {
-                    offsets.push((index, line_offset));
+                    offsets.push((index, start_offset + line_offset));
                     curr_num_lines -= 1;
                 }
                 if curr_num_lines == 0 {
@@ -264,14 +268,9 @@ impl TextBuffer for SimplePieceTable {
 
         let (first_piece_index, first_newline_offset) = lines[0];
 
-        dbg!(first_piece_index);
-        dbg!(first_newline_offset);
-
         let current_col = if first_piece_index == current_piece.index {
-            println!("THEN");
             piece_offset - first_newline_offset
         } else {
-            println!("ELSE");
             let mut col =
                 piece_offset + (self.pieces[first_piece_index].len - (first_newline_offset + 1));
             if first_piece_index + 1 < current_piece.index {
@@ -281,8 +280,6 @@ impl TextBuffer for SimplePieceTable {
             }
             col
         };
-
-        dbg!(current_col);
 
         if lines.len() == 1 {
             // It means that the above line is the first line.
@@ -295,7 +292,7 @@ impl TextBuffer for SimplePieceTable {
                 return Some(current_col.min(first_newline_offset - second_newline_offset - 1));
             }
             if second_piece_index < first_newline_offset {
-                let mut correct_offset = dbg!(second_newline_offset + current_col + 1);
+                let mut correct_offset = second_newline_offset + current_col + 1;
                 for (i, piece) in self
                     .pieces
                     .iter()
@@ -323,8 +320,8 @@ impl TextBuffer for SimplePieceTable {
     fn next_line(&self, offset: usize) -> Option<usize> {
         let current_piece = self.get_current_piece(offset)?;
         let piece_offset = offset - current_piece.len_until;
-
         let prev_lines = self.scan_lines(-1, current_piece.index, piece_offset);
+
         let next_lines = self.scan_lines(1, current_piece.index, piece_offset);
 
         if next_lines.is_empty() {
@@ -343,7 +340,8 @@ impl TextBuffer for SimplePieceTable {
         assert!(next_lines.len() == 1);
         let (next_line_index, next_line_offset) = next_lines[0];
 
-        let mut correct_offset = next_line_offset + current_col + 1;
+        let mut correct_offset = next_line_offset + current_col;
+        let mut correct_index = next_line_index;
 
         for (i, piece) in self.pieces.iter().enumerate().skip(next_line_index) {
             let start_offset = if i == next_line_index {
@@ -352,8 +350,23 @@ impl TextBuffer for SimplePieceTable {
                 0
             };
 
+            if start_offset >= piece.len {
+                // the start offset is on the next piece.
+                correct_offset -= piece.len;
+                correct_index += 1;
+
+                if correct_index >= self.pieces.len() {
+                    // The correct index is past the end of the text,
+                    // therfore we return the next newline offset.
+                    let abs = self.get_absolute_offset(next_line_index, next_line_offset);
+                    return Some(abs);
+                }
+                continue;
+            }
+
             if correct_offset >= piece.len {
                 correct_offset -= piece.len;
+                correct_index += 1;
             }
 
             let buffer = self.get_buffer(piece);
@@ -363,13 +376,14 @@ impl TextBuffer for SimplePieceTable {
             // Try to find a newline or the current column.
             if let Some(newline) = memchr('\n' as u8, piece_slice) {
                 let max_col_offset = newline - 1;
-                if max_col_offset < correct_offset {
+
+                if i != correct_index || max_col_offset < correct_offset {
                     let abs = self.get_absolute_offset(i, max_col_offset);
                     return Some(abs);
-                } else {
-                    let abs = self.get_absolute_offset(i, correct_offset);
-                    return Some(abs);
                 }
+
+                let abs = self.get_absolute_offset(i, correct_offset);
+                return Some(abs);
             } else if correct_offset < piece.len {
                 let abs = self.get_absolute_offset(i, correct_offset);
                 return Some(abs);
@@ -861,6 +875,52 @@ mod test {
             assert_eq!(table.char_at(15), Some('g'));
             let idx = table.prev_line(15).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('g', 6));
+        }
+    }
+
+    #[test]
+    fn next_line() {
+        let text = "the dog is amazing\n";
+        let mut table = SimplePieceTable::new(text.to_owned());
+        assert_eq!(table.contents(), text);
+
+        table.insert(19, "cool dog\n").unwrap();
+        assert_eq!(table.contents(), "the dog is amazing\ncool dog\n");
+
+        table.insert(28, "golden retrivier\n").unwrap();
+        assert_eq!(
+            table.contents(),
+            "the dog is amazing\ncool dog\ngolden retrivier\n"
+        );
+        // r#"
+        // the dog is amazing
+        // cool dog
+        // golden retrivier
+        // "#;
+        {
+            assert_eq!(table.char_at(19), Some('c'));
+            let idx = table.next_line(19).expect("should not fail");
+            assert_eq!((table.char_at(idx).unwrap(), idx), ('g', 28));
+        }
+        {
+            assert_eq!(table.char_at(23), Some(' '));
+            let idx = table.next_line(23).expect("should not fail");
+            assert_eq!((table.char_at(idx).unwrap(), idx), ('e', 32));
+        }
+        {
+            assert_eq!(table.char_at(43), Some('r'));
+            let idx = table.next_line(43).expect("should not fail");
+            assert_eq!((table.char_at(idx).unwrap(), idx), ('\n', 44));
+        }
+        {
+            assert_eq!(table.char_at(32), Some('e'));
+            let idx = table.next_line(32).expect("should not fail");
+            assert_eq!((table.char_at(idx).unwrap(), idx), ('\n', 44));
+        }
+        {
+            assert_eq!(table.char_at(14), Some('z'));
+            let idx = table.next_line(14).expect("should not fail");
+            assert_eq!((table.char_at(idx).unwrap(), idx), ('g', 26));
         }
     }
 }
