@@ -5,7 +5,7 @@ extern crate nalgebra as na;
 extern crate rusttype;
 extern crate winit;
 
-use edrus::text_buffer::HorizonalOffset;
+use edrus::text_buffer::HorizontalOffset;
 use na::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
 use std::collections::HashMap;
 use std::mem;
@@ -66,7 +66,7 @@ struct VisualCursor {
 
 impl VisualCursor {
     fn x_from_horizontal_offset(
-        horizontal_offset: HorizonalOffset,
+        horizontal_offset: HorizontalOffset,
         font_cache: &mut FontCache,
     ) -> f32 {
         assert!(horizontal_offset.0 > 0);
@@ -90,14 +90,14 @@ impl VisualCursor {
         self.position.x += curr_hmetrics.advance_width;
     }
 
-    fn move_down(&mut self, font_cache: &mut FontCache, hoffset: HorizonalOffset) {
+    fn move_down(&mut self, font_cache: &mut FontCache, hoffset: HorizontalOffset) {
         let vmetrics = font_cache.v_metrics();
         let vertical_offset = (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
         self.position.y += vertical_offset;
         self.position.x = Self::x_from_horizontal_offset(hoffset, font_cache);
     }
 
-    fn move_up(&mut self, font_cache: &mut FontCache, hoffset: HorizonalOffset) {
+    fn move_up(&mut self, font_cache: &mut FontCache, hoffset: HorizontalOffset) {
         let vmetrics = font_cache.v_metrics();
         let vertical_offset = (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
         self.position.y -= vertical_offset;

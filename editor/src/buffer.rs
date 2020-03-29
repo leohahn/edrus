@@ -1,4 +1,4 @@
-use crate::text_buffer::{HorizonalOffset, SimplePieceTable, TextBuffer};
+use crate::text_buffer::{HorizontalOffset, SimplePieceTable, TextBuffer};
 use std::path::Path;
 
 pub struct Cursor {
@@ -117,7 +117,7 @@ impl Buffer {
         })
     }
 
-    pub fn column(&self, offset: usize) -> Option<HorizonalOffset> {
+    pub fn column(&self, offset: usize) -> Option<HorizontalOffset> {
         self.piece_table.column_for_offset(offset)
     }
 }
