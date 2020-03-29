@@ -5,6 +5,7 @@ extern crate nalgebra as na;
 extern crate rusttype;
 extern crate winit;
 
+use edrus::text_buffer::HorizonalOffset;
 use na::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
 use std::collections::HashMap;
 use std::mem;
@@ -64,6 +65,19 @@ struct VisualCursor {
 }
 
 impl VisualCursor {
+    fn x_from_horizontal_offset(
+        horizontal_offset: HorizonalOffset,
+        font_cache: &mut FontCache,
+    ) -> f32 {
+        assert!(horizontal_offset.0 > 0);
+        // FIXME(lhahn): this is a hack, only works because I am using a
+        // monospaced font.
+        let glyph = font_cache.get_glyph('a');
+        let hmetrics = glyph.h_metrics();
+        dbg!(&horizontal_offset);
+        hmetrics.advance_width * (horizontal_offset.0 - 1) as f32
+    }
+
     fn move_left(&mut self, font_cache: &mut FontCache, left_char: char) {
         let left_glyph = font_cache.get_glyph(left_char);
         let left_hmetrics = left_glyph.h_metrics();
@@ -76,16 +90,18 @@ impl VisualCursor {
         self.position.x += curr_hmetrics.advance_width;
     }
 
-    fn move_down(&mut self, font_cache: &mut FontCache) {
+    fn move_down(&mut self, font_cache: &mut FontCache, hoffset: HorizonalOffset) {
         let vmetrics = font_cache.v_metrics();
         let vertical_offset = (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
         self.position.y += vertical_offset;
+        self.position.x = Self::x_from_horizontal_offset(hoffset, font_cache);
     }
 
-    fn move_up(&mut self, font_cache: &mut FontCache) {
+    fn move_up(&mut self, font_cache: &mut FontCache, hoffset: HorizonalOffset) {
         let vmetrics = font_cache.v_metrics();
         let vertical_offset = (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
         self.position.y -= vertical_offset;
+        self.position.x = Self::x_from_horizontal_offset(hoffset, font_cache);
     }
 
     fn draw_cursor_for(&mut self, font_cache: &mut FontCache, c: char) -> rusttype::Rect<f32> {
@@ -472,16 +488,20 @@ fn main() {
                     match vk {
                         event::VirtualKeyCode::J => {
                             if key.state == event::ElementState::Pressed {
-                                buffer.move_down().map(|_| {
-                                    visual_cursor.move_down(&mut font_cache);
+                                buffer.move_down().map(|new_offset| {
+                                    let hoffset =
+                                        buffer.column(new_offset).expect("should not fail");
+                                    visual_cursor.move_down(&mut font_cache, hoffset);
                                     window.request_redraw();
                                 });
                             }
                         }
                         event::VirtualKeyCode::K => {
                             if key.state == event::ElementState::Pressed {
-                                buffer.move_up().map(|_| {
-                                    visual_cursor.move_up(&mut font_cache);
+                                buffer.move_up().map(|new_offset| {
+                                    let hoffset =
+                                        buffer.column(new_offset).expect("should not fail");
+                                    visual_cursor.move_up(&mut font_cache, hoffset);
                                     window.request_redraw();
                                 });
                             }

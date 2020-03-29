@@ -2,7 +2,7 @@ use crate::error::Error;
 use memchr::{memchr, memrchr};
 
 #[derive(Debug, PartialEq)]
-pub struct HorizonalOffset(usize);
+pub struct HorizonalOffset(pub usize);
 
 pub trait TextBuffer {
     fn insert(&mut self, pos: usize, text: &str) -> Result<(), Error>;
