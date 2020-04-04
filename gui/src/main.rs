@@ -125,13 +125,17 @@ impl EditorView {
         );
     }
 
-    fn scroll_down(&mut self) {
-        self.eye += Vector3::new(0.0, 5.0, 0.0);
+    fn scroll_down(&mut self, font_cache: &FontCache) {
+        let vmetrics = font_cache.v_metrics();
+        let vertical_offset = (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
+        self.eye.y += vertical_offset;
         self.view_matrix = get_view_matrix(&self.eye);
     }
 
-    fn scroll_up(&mut self) {
-        self.eye -= Vector3::new(0.0, 5.0, 0.0);
+    fn scroll_up(&mut self, font_cache: &FontCache) {
+        let vmetrics = font_cache.v_metrics();
+        let vertical_offset = (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
+        self.eye.y -= vertical_offset;
         self.view_matrix = get_view_matrix(&self.eye);
     }
 
@@ -471,6 +475,7 @@ fn main() {
     // let glyph = font.glyph('s');
     let font_scale = Scale { x: 16.0, y: 16.0 };
     let mut font_cache = FontCache::new(font_scale, font_data);
+    let mut ctrl_pressed = false;
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -610,6 +615,12 @@ fn main() {
                 queue.submit(&[encoder.finish()]);
             }
             event::Event::DeviceEvent {
+                event: event::DeviceEvent::ModifiersChanged(modifiers_state),
+                ..
+            } => {
+                ctrl_pressed = modifiers_state.ctrl();
+            }
+            event::Event::DeviceEvent {
                 event: event::DeviceEvent::Key(key),
                 ..
             } => {
@@ -656,6 +667,18 @@ fn main() {
                                     editor_view.move_left(&mut font_cache);
                                     window.request_redraw();
                                 }
+                            }
+                        }
+                        event::VirtualKeyCode::E => {
+                            if ctrl_pressed {
+                                editor_view.scroll_down(&font_cache);
+                                window.request_redraw();
+                            }
+                        }
+                        event::VirtualKeyCode::Y => {
+                            if ctrl_pressed {
+                                editor_view.scroll_up(&font_cache);
+                                window.request_redraw();
                             }
                         }
                         _ => {}
