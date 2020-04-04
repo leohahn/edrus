@@ -186,7 +186,6 @@ impl SimplePieceTable {
 
                     let next_offset = line_offset + 1;
                     slice = &slice[next_offset..next_offset + (slice.len() - next_offset)];
-                    dbg!(String::from_utf8_lossy(slice));
                 }
                 if curr_num_lines == 0 {
                     break;
@@ -195,6 +194,18 @@ impl SimplePieceTable {
         }
 
         offsets
+    }
+
+    fn is_on_the_right_of(
+        &self,
+        index: usize,
+        offset: usize,
+        target_index: usize,
+        target_offset: usize,
+    ) -> bool {
+        let abs = self.get_absolute_offset(index, offset);
+        let target_abs = self.get_absolute_offset(target_index, target_offset);
+        abs == target_abs + 1
     }
 }
 
@@ -270,6 +281,10 @@ impl TextBuffer for SimplePieceTable {
         let piece_offset = offset - current_piece.len_until;
         let buffer = self.get_buffer(&current_piece.piece);
 
+        if buffer.as_bytes()[current_piece.piece.start + piece_offset] == '\n' as u8 {
+            return None;
+        }
+
         assert!(buffer.is_char_boundary(current_piece.piece.start + piece_offset));
 
         let current_char_len =
@@ -304,6 +319,10 @@ impl TextBuffer for SimplePieceTable {
         let current_piece = self.get_current_piece(offset)?;
         let piece_offset = offset - current_piece.len_until;
         let buffer = self.get_buffer(&current_piece.piece);
+
+        if buffer.as_bytes()[current_piece.piece.start + piece_offset] == '\n' as u8 {
+            return None;
+        }
 
         assert!(buffer.is_char_boundary(current_piece.piece.start + piece_offset));
 
@@ -342,8 +361,6 @@ impl TextBuffer for SimplePieceTable {
     }
 
     fn prev_line(&self, offset: usize) -> Option<usize> {
-        println!("RUNNING PREV_LINE");
-
         let current_piece = self.get_current_piece(offset)?;
         let piece_offset = offset - current_piece.len_until;
         let lines = self.scan_lines(-2, current_piece.index, piece_offset);
@@ -378,8 +395,6 @@ impl TextBuffer for SimplePieceTable {
             col
         };
 
-        dbg!(current_col);
-
         if lines.len() == 1 {
             // It means that the above line is the first line.
             assert!(first_piece_index == 0);
@@ -388,30 +403,58 @@ impl TextBuffer for SimplePieceTable {
             Some((current_col - 1).min(first_newline_offset - 1))
         } else {
             let (second_piece_index, second_newline_offset) = lines[1];
-            let current_piece = &self.pieces[second_piece_index];
 
-            if second_piece_index == first_newline_offset {
-                return Some(current_col.min(first_newline_offset - second_newline_offset - 1));
+            dbg!(
+                (first_piece_index, first_newline_offset),
+                (second_piece_index, second_newline_offset)
+            );
+
+            let mut correct_offset = second_newline_offset + current_col;
+            let mut correct_index = second_piece_index;
+
+            dbg!(current_col, correct_index, correct_offset);
+
+            if self.is_on_the_right_of(
+                first_piece_index,
+                first_newline_offset,
+                second_piece_index,
+                second_newline_offset,
+            ) {
+                let abs = self.get_absolute_offset(first_piece_index, first_newline_offset);
+                return Some(abs);
             }
-            if second_piece_index < first_newline_offset {
-                let mut correct_offset = second_newline_offset + current_col;
-                for (i, piece) in self
-                    .pieces
-                    .iter()
-                    .enumerate()
-                    .take(first_piece_index + 1)
-                    .skip(second_piece_index)
-                {
-                    if i == first_piece_index {
-                        let abs = self
-                            .get_absolute_offset(i, correct_offset.min(first_newline_offset - 1));
-                        return Some(abs);
+
+            for (i, piece) in self
+                .pieces
+                .iter()
+                .enumerate()
+                .take(first_piece_index + 1)
+                .skip(second_piece_index)
+            {
+                if correct_offset > piece.len {
+                    correct_offset -= piece.len;
+                    correct_index += 1;
+                    if i != first_piece_index {
+                        continue;
                     }
-                    if correct_offset < piece.len {
-                        let abs = self.get_absolute_offset(i, correct_offset);
-                        return Some(abs);
-                    }
-                    correct_offset -= current_piece.len;
+                }
+
+                dbg!(first_piece_index, first_newline_offset);
+                dbg!(second_piece_index, second_newline_offset);
+                dbg!(correct_index, correct_offset);
+
+                if dbg!(correct_index) == dbg!(first_piece_index) {
+                    let abs = self.get_absolute_offset(
+                        correct_index,
+                        correct_offset.min(first_newline_offset - 1),
+                    );
+                    return Some(abs);
+                } else if correct_index > first_piece_index {
+                    let abs = self.get_absolute_offset(first_piece_index, first_newline_offset - 1);
+                    return Some(abs);
+                } else {
+                    let abs = self.get_absolute_offset(correct_index, correct_offset);
+                    return Some(abs);
                 }
             }
 
@@ -429,9 +472,16 @@ impl TextBuffer for SimplePieceTable {
             return None;
         }
 
+        let current_piece_buffer = self.get_buffer(&current_piece.piece);
+
         let current_col = if prev_lines.is_empty() {
             // The current line is the first line.
             offset + 1
+        } else if current_piece_buffer.as_bytes()[piece_offset] as char == '\n' {
+            let (prev_line_index, prev_line_offset) = prev_lines[0];
+            assert_eq!(prev_line_index, current_piece.index);
+            assert_eq!(prev_line_offset, piece_offset - 1);
+            1
         } else {
             let (prev_line_index, prev_line_offset) = prev_lines[0];
             let abs_offset = self.get_absolute_offset(prev_line_index, prev_line_offset);
@@ -476,6 +526,14 @@ impl TextBuffer for SimplePieceTable {
 
             // Try to find a newline or the current column.
             if let Some(newline) = memchr('\n' as u8, piece_slice) {
+                if i == next_line_index && newline == 0 {
+                    // If right after the first newline we have another newline,
+                    // we just return it as the current position.
+                    // he[y]\n\nman --> hey\n[\n]man.
+                    let abs = self.get_absolute_offset(i, piece.start + start_offset + newline);
+                    return Some(abs);
+                }
+
                 let max_col_offset = piece.start + start_offset + newline - 1;
 
                 if i != correct_index || max_col_offset < correct_offset {
@@ -483,8 +541,7 @@ impl TextBuffer for SimplePieceTable {
                     return Some(abs);
                 }
 
-                let abs = self.get_absolute_offset(i, dbg!(correct_offset));
-                dbg!(abs);
+                let abs = self.get_absolute_offset(i, correct_offset);
                 return Some(abs);
             } else if correct_offset < piece.len {
                 let abs = self.get_absolute_offset(i, correct_offset);
@@ -1105,5 +1162,39 @@ version = "0.7.9""#;
         assert_eq!(table.column_for_offset(50), Some(HorizontalOffset(1)));
         assert_eq!(table.column_for_offset(69), Some(HorizontalOffset(20)));
         assert_eq!(table.column_for_offset(141), Some(HorizontalOffset(17)));
+    }
+
+    #[test]
+    fn multiple_lines_edge_cases() {
+        let table_str = r#"source = "registry"
+checksum = "d5e6"
+dependencies = []
+
+[[package]]
+name = "alga"
+version = "0.9.3""#;
+
+        let table = SimplePieceTable::new(table_str.to_owned());
+        {
+            assert_eq!(table.char_at(54), Some(']'));
+            assert_eq!(table.column_for_offset(54), Some(HorizontalOffset(17)));
+            assert_eq!(table.next_line(54), Some(56));
+        }
+        {
+            assert_eq!(table.char_at(56), Some('\n'));
+            assert_eq!(table.column_for_offset(56), Some(HorizontalOffset(1)));
+            assert_eq!(table.next(56), None);
+            assert_eq!(table.prev(56), None);
+            assert_eq!(table.next_line(56), Some(57));
+            assert_eq!(table.char_at(57), Some('['));
+        }
+        {
+            assert_eq!(table.char_at(38), Some('d'));
+            assert_eq!(table.prev_line(56), Some(38));
+        }
+        {
+            assert_eq!(table.char_at(67), Some(']'));
+            assert_eq!(table.prev_line(67), Some(56));
+        }
     }
 }
