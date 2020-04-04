@@ -9,6 +9,8 @@ use edrus::text_buffer::HorizontalOffset;
 use na::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
 use std::collections::HashMap;
 use std::mem;
+use std::path::Path;
+use std::rc::Rc;
 use wgpu_glyph::{GlyphBrushBuilder, Scale, Section};
 use winit::{
     event,
@@ -60,7 +62,7 @@ impl<'a> FontCache<'a> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 enum VisualCursorMode {
     Normal,
     Edit,
@@ -69,6 +71,117 @@ enum VisualCursorMode {
 struct VisualCursor {
     position: Point2<f32>,
     mode: VisualCursorMode,
+}
+
+impl VisualCursor {
+    fn mode(&self) -> VisualCursorMode {
+        self.mode
+    }
+}
+
+struct EditorView {
+    visual_cursor: VisualCursor,
+    buffer: edrus::buffer::Buffer,
+    projection_matrix: Matrix4<f32>,
+    view_matrix: Matrix4<f32>,
+    eye: Point3<f32>,
+}
+
+fn get_view_matrix(eye: &Point3<f32>) -> Matrix4<f32> {
+    let target = eye + Vector3::new(0.0, 0.0, 1.0);
+    na::Matrix4::look_at_rh(eye, &target, &-Vector3::y())
+}
+
+impl EditorView {
+    fn new(filepath: impl AsRef<Path>, width: u32, height: u32) -> Self {
+        let projection_matrix = na::Matrix4::new_orthographic(
+            0.0,              // left
+            width as f32,     // right
+            -(height as f32), // bottom
+            0.0,              // top
+            0.1,              // znear
+            100.0,            // zfar
+        );
+
+        let eye = Point3::new(0.0, 0.0, -5.0);
+
+        Self {
+            visual_cursor: VisualCursor::new(0.0, 0.0),
+            buffer: edrus::buffer::Buffer::new(filepath).expect("buffer creation failed"),
+            projection_matrix: projection_matrix,
+            view_matrix: get_view_matrix(&eye),
+            eye: eye,
+        }
+    }
+
+    fn update_size(&mut self, width: u32, height: u32) {
+        self.projection_matrix = Matrix4::new_orthographic(
+            0.0,              // left
+            width as f32,     // right
+            -(height as f32), // bottom
+            0.0,              // top
+            0.1,              // znear
+            100.0,            // zfar
+        );
+    }
+
+    fn scroll_down(&mut self) {
+        self.eye += Vector3::new(0.0, 5.0, 0.0);
+        self.view_matrix = get_view_matrix(&self.eye);
+    }
+
+    fn scroll_up(&mut self) {
+        self.eye -= Vector3::new(0.0, 5.0, 0.0);
+        self.view_matrix = get_view_matrix(&self.eye);
+    }
+
+    fn move_up(&mut self, font_cache: &mut FontCache) -> Option<()> {
+        self.buffer.move_up().map(|new_offset| {
+            let hoffset = self.buffer.column(new_offset).expect("should not fail");
+            self.visual_cursor.move_up(font_cache, hoffset);
+        })
+    }
+
+    fn move_down(&mut self, font_cache: &mut FontCache) -> Option<()> {
+        self.buffer.move_down().map(|new_offset| {
+            let hoffset = self.buffer.column(new_offset).expect("should not fail");
+            self.visual_cursor.move_down(font_cache, hoffset);
+        })
+    }
+
+    fn move_left(&mut self, font_cache: &mut FontCache) -> Option<()> {
+        self.buffer.move_left().map(|_| {
+            self.visual_cursor
+                .move_left(font_cache, self.buffer.current_char());
+        })
+    }
+
+    fn move_right(&mut self, font_cache: &mut FontCache) -> Option<()> {
+        self.buffer.move_right().map(|_| {
+            self.visual_cursor
+                .move_right(font_cache, self.buffer.current_char());
+        })
+    }
+
+    fn contents(&self) -> &str {
+        self.buffer.contents()
+    }
+
+    fn draw_cursor(&self, font_cache: &mut FontCache) -> rusttype::Rect<f32> {
+        self.visual_cursor
+            .draw_cursor_for(font_cache, self.buffer.current_char())
+    }
+
+    fn view_projection(&self) -> Matrix4<f32> {
+        #[cfg_attr(rustfmt, rustfmt_skip)]
+        let mx_correction: Matrix4<f32> = Matrix4::new(
+            1.0, 0.0, 0.0, 0.0,
+            0.0, -1.0, 0.0, 0.0,
+            0.0, 0.0, 0.5, 0.5,
+            0.0, 0.0, 0.0, 1.0,
+        );
+        mx_correction * self.projection_matrix * self.view_matrix
+    }
 }
 
 impl VisualCursor {
@@ -97,7 +210,6 @@ impl VisualCursor {
         // monospaced font.
         let glyph = font_cache.get_glyph('a');
         let hmetrics = glyph.h_metrics();
-        dbg!(&horizontal_offset);
         hmetrics.advance_width * (horizontal_offset.0 - 1) as f32
     }
 
@@ -127,7 +239,7 @@ impl VisualCursor {
         self.position.x = Self::x_from_horizontal_offset(hoffset, font_cache);
     }
 
-    fn draw_cursor_for(&mut self, font_cache: &mut FontCache, c: char) -> rusttype::Rect<f32> {
+    fn draw_cursor_for(&self, font_cache: &mut FontCache, c: char) -> rusttype::Rect<f32> {
         let mut rect = rusttype::Rect {
             min: rusttype::point(self.position.x, self.position.y),
             max: rusttype::point(self.position.x, self.position.y),
@@ -145,24 +257,19 @@ impl VisualCursor {
     }
 }
 
-fn create_cursor(origin: (f32, f32), view_proj: Matrix4<f32>) -> (VisualCursor, Vec<Vector2<f32>>) {
-    let (xo, yo) = origin;
-    assert!(xo >= 0.0);
-    assert!(yo >= 0.0);
-
+fn create_cursor() -> Vec<Vector2<f32>> {
+    let xo = 0.0;
+    let yo = 0.0;
     let width = 1.0;
     let height = 1.0;
-    (
-        VisualCursor::new(xo, yo),
-        vec![
-            Vector2::new(xo, yo),
-            Vector2::new(xo + width, yo),
-            Vector2::new(xo + width, yo + height),
-            Vector2::new(xo + width, yo + height),
-            Vector2::new(xo, yo + height),
-            Vector2::new(xo, yo),
-        ],
-    )
+    vec![
+        Vector2::new(xo, yo),
+        Vector2::new(xo + width, yo),
+        Vector2::new(xo + width, yo + height),
+        Vector2::new(xo + width, yo + height),
+        Vector2::new(xo, yo + height),
+        Vector2::new(xo, yo),
+    ]
 }
 
 fn create_view_projection_matrix(width: u32, height: u32, eye: Point3<f32>) -> Matrix4<f32> {
@@ -201,8 +308,6 @@ fn main() {
             std::process::exit(1);
         }
     };
-
-    let mut buffer = edrus::buffer::Buffer::new(filepath).unwrap();
 
     let event_loop = EventLoop::new();
 
@@ -260,10 +365,12 @@ fn main() {
     };
 
     let mut eye = Point3::new(0.0, 0.0, -5.0);
-    let mut view_projection_matrix =
-        create_view_projection_matrix(sc_descriptor.width, sc_descriptor.height, eye);
+    // let mut view_projection_matrix =
+    //     create_view_projection_matrix(sc_descriptor.width, sc_descriptor.height, eye);
 
-    let (mut visual_cursor, cursor_vertex_data) = create_cursor((0.0, 0.0), view_projection_matrix);
+    let cursor_vertex_data = create_cursor();
+    let mut editor_view = EditorView::new(filepath, sc_descriptor.width, sc_descriptor.height);
+
     let cursor_vertex_buffer = device
         .create_buffer_mapped(cursor_vertex_data.len(), wgpu::BufferUsage::VERTEX)
         .fill_from_slice(&cursor_vertex_data);
@@ -376,8 +483,7 @@ fn main() {
                 sc_descriptor.width = size.width;
                 sc_descriptor.height = size.height;
                 swap_chain = device.create_swap_chain(&surface, &sc_descriptor);
-                view_projection_matrix =
-                    create_view_projection_matrix(sc_descriptor.width, sc_descriptor.height, eye);
+                editor_view.update_size(sc_descriptor.width, sc_descriptor.height);
                 window.request_redraw();
             }
             event::Event::RedrawRequested(_) => {
@@ -424,8 +530,7 @@ fn main() {
                         );
                     }
                     {
-                        let cursor_rect =
-                            visual_cursor.draw_cursor_for(&mut font_cache, buffer.current_char());
+                        let cursor_rect = editor_view.draw_cursor(&mut font_cache);
                         let mut model = Matrix4::new_translation(&Vector3::new(
                             cursor_rect.min.x,
                             cursor_rect.min.y,
@@ -438,7 +543,7 @@ fn main() {
                         ));
 
                         let coordinate_ubo = CoordinateUniformBuffer {
-                            view_projection: view_projection_matrix,
+                            view_projection: editor_view.view_projection(),
                             model: model,
                         };
                         let temp_buf = device
@@ -477,7 +582,7 @@ fn main() {
                 // Render the text
                 {
                     glyph_brush.queue(Section {
-                        text: buffer.contents(),
+                        text: editor_view.contents(),
                         screen_position: (0.0, 0.0),
                         color: [1.0, 1.0, 1.0, 1.0],
                         scale: Scale { x: 16.0, y: 16.0 },
@@ -487,7 +592,7 @@ fn main() {
 
                     let view_proj: [f32; 16] = {
                         let mut arr: [f32; 16] = Default::default();
-                        arr.copy_from_slice(view_projection_matrix.as_slice());
+                        arr.copy_from_slice(editor_view.view_projection().as_slice());
                         arr
                     };
 
@@ -512,54 +617,45 @@ fn main() {
                     match vk {
                         event::VirtualKeyCode::J => {
                             if key.state == event::ElementState::Pressed {
-                                buffer.move_down().map(|new_offset| {
-                                    let hoffset =
-                                        buffer.column(new_offset).expect("should not fail");
-                                    visual_cursor.move_down(&mut font_cache, hoffset);
+                                editor_view.move_down(&mut font_cache).map(|_| {
                                     window.request_redraw();
                                 });
                             }
                         }
                         event::VirtualKeyCode::K => {
                             if key.state == event::ElementState::Pressed {
-                                buffer.move_up().map(|new_offset| {
-                                    let hoffset =
-                                        buffer.column(new_offset).expect("should not fail");
-                                    visual_cursor.move_up(&mut font_cache, hoffset);
+                                editor_view.move_up(&mut font_cache).map(|_| {
                                     window.request_redraw();
                                 });
                             }
                         }
                         event::VirtualKeyCode::H => {
                             if key.state == event::ElementState::Pressed {
-                                buffer.move_left().map(|_| {
-                                    visual_cursor.move_left(&mut font_cache, buffer.current_char());
+                                editor_view.move_left(&mut font_cache).map(|_| {
                                     window.request_redraw();
                                 });
                             }
                         }
                         event::VirtualKeyCode::L => {
                             if key.state == event::ElementState::Pressed {
-                                buffer.move_right().map(|_| {
-                                    visual_cursor
-                                        .move_right(&mut font_cache, buffer.current_char());
+                                editor_view.move_right(&mut font_cache).map(|_| {
                                     window.request_redraw();
                                 });
                             }
                         }
                         event::VirtualKeyCode::I => {
                             if key.state == event::ElementState::Pressed {
-                                visual_cursor.enter_edit_mode();
+                                editor_view.visual_cursor.enter_edit_mode();
                                 window.request_redraw();
                             }
                         }
                         event::VirtualKeyCode::Escape => {
                             if key.state == event::ElementState::Pressed {
-                                visual_cursor.enter_normal_mode();
-                                buffer.move_left().map(|_| {
-                                    visual_cursor.move_left(&mut font_cache, buffer.current_char());
-                                });
-                                window.request_redraw();
+                                if editor_view.visual_cursor.mode() != VisualCursorMode::Normal {
+                                    editor_view.visual_cursor.enter_normal_mode();
+                                    editor_view.move_left(&mut font_cache);
+                                    window.request_redraw();
+                                }
                             }
                         }
                         _ => {}
