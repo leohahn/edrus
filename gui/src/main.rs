@@ -60,11 +60,34 @@ impl<'a> FontCache<'a> {
     }
 }
 
+#[derive(Debug, PartialEq)]
+enum VisualCursorMode {
+    Normal,
+    Edit,
+}
+
 struct VisualCursor {
     position: Point2<f32>,
+    mode: VisualCursorMode,
 }
 
 impl VisualCursor {
+    fn new(x: f32, y: f32) -> Self {
+        Self {
+            position: Point2::new(x, y),
+            mode: VisualCursorMode::Normal,
+        }
+    }
+
+    fn enter_edit_mode(&mut self) {
+        assert!(self.mode != VisualCursorMode::Edit);
+        self.mode = VisualCursorMode::Edit;
+    }
+
+    fn enter_normal_mode(&mut self) {
+        self.mode = VisualCursorMode::Normal;
+    }
+
     fn x_from_horizontal_offset(
         horizontal_offset: HorizontalOffset,
         font_cache: &mut FontCache,
@@ -112,7 +135,10 @@ impl VisualCursor {
 
         let vmetrics = font_cache.v_metrics();
         let hmetrics = font_cache.get_glyph(c).h_metrics();
-        rect.max.x += hmetrics.advance_width;
+        rect.max.x += match self.mode {
+            VisualCursorMode::Normal => hmetrics.advance_width,
+            _ => 2.0, // TODO: remove hardcoded value here.
+        };
         rect.max.y += vmetrics.ascent - vmetrics.descent;
 
         rect
@@ -127,9 +153,7 @@ fn create_cursor(origin: (f32, f32), view_proj: Matrix4<f32>) -> (VisualCursor, 
     let width = 1.0;
     let height = 1.0;
     (
-        VisualCursor {
-            position: Point2::new(xo, yo),
-        },
+        VisualCursor::new(xo, yo),
         vec![
             Vector2::new(xo, yo),
             Vector2::new(xo + width, yo),
@@ -510,11 +534,6 @@ fn main() {
                             if key.state == event::ElementState::Pressed {
                                 buffer.move_left().map(|_| {
                                     visual_cursor.move_left(&mut font_cache, buffer.current_char());
-                                    // view_projection_matrix = create_view_projection_matrix(
-                                    //     sc_descriptor.width,
-                                    //     sc_descriptor.height,
-                                    //     eye,
-                                    // );
                                     window.request_redraw();
                                 });
                             }
@@ -526,11 +545,21 @@ fn main() {
                                         .move_right(&mut font_cache, buffer.current_char());
                                     window.request_redraw();
                                 });
-                                // view_projection_matrix = create_view_projection_matrix(
-                                //     sc_descriptor.width,
-                                //     sc_descriptor.height,
-                                //     eye,
-                                // );
+                            }
+                        }
+                        event::VirtualKeyCode::I => {
+                            if key.state == event::ElementState::Pressed {
+                                visual_cursor.enter_edit_mode();
+                                window.request_redraw();
+                            }
+                        }
+                        event::VirtualKeyCode::Escape => {
+                            if key.state == event::ElementState::Pressed {
+                                visual_cursor.enter_normal_mode();
+                                buffer.move_left().map(|_| {
+                                    visual_cursor.move_left(&mut font_cache, buffer.current_char());
+                                });
+                                window.request_redraw();
                             }
                         }
                         _ => {}

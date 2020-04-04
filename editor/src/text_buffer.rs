@@ -420,6 +420,7 @@ impl TextBuffer for SimplePieceTable {
                 second_piece_index,
                 second_newline_offset,
             ) {
+                // We return the first previous newline if both newlines are consecutive.
                 let abs = self.get_absolute_offset(first_piece_index, first_newline_offset);
                 return Some(abs);
             }
