@@ -276,29 +276,6 @@ fn create_cursor() -> Vec<Vector2<f32>> {
     ]
 }
 
-fn create_view_projection_matrix(width: u32, height: u32, eye: Point3<f32>) -> Matrix4<f32> {
-    let target = eye + Vector3::new(0.0, 0.0, 1.0);
-    let view = na::Isometry3::look_at_rh(&eye, &target, &-Vector3::y());
-    let projection = na::Orthographic3::new(
-        0.0,              // left
-        width as f32,     // right
-        -(height as f32), // bottom
-        0.0,              // top
-        0.1,              // znear
-        100.0,            // zfar
-    );
-
-    #[cfg_attr(rustfmt, rustfmt_skip)]
-    let mx_correction: Matrix4<f32> = Matrix4::new(
-        1.0, 0.0, 0.0, 0.0,
-        0.0, -1.0, 0.0, 0.0,
-        0.0, 0.0, 0.5, 0.5,
-        0.0, 0.0, 0.0, 1.0,
-    );
-
-    mx_correction * projection.as_matrix() * view.to_homogeneous()
-}
-
 fn main() {
     if std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", "edrus=debug");
@@ -367,10 +344,6 @@ fn main() {
         height: size.height,
         present_mode: wgpu::PresentMode::Vsync,
     };
-
-    let mut eye = Point3::new(0.0, 0.0, -5.0);
-    // let mut view_projection_matrix =
-    //     create_view_projection_matrix(sc_descriptor.width, sc_descriptor.height, eye);
 
     let cursor_vertex_data = create_cursor();
     let mut editor_view = EditorView::new(filepath, sc_descriptor.width, sc_descriptor.height);
