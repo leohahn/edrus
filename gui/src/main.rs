@@ -588,6 +588,23 @@ fn main() {
                 queue.submit(&[encoder.finish()]);
             }
             event::Event::DeviceEvent {
+                event:
+                    event::DeviceEvent::MouseWheel {
+                        delta: mouse_scroll_delta,
+                    },
+                ..
+            } => match mouse_scroll_delta {
+                event::MouseScrollDelta::LineDelta(_, y) => {
+                    if y < 0.0 {
+                        editor_view.scroll_down(&font_cache);
+                    } else {
+                        editor_view.scroll_up(&font_cache);
+                    }
+                    window.request_redraw();
+                }
+                _ => panic!("this scroll format is not yet supported"),
+            },
+            event::Event::DeviceEvent {
                 event: event::DeviceEvent::ModifiersChanged(modifiers_state),
                 ..
             } => {
@@ -629,8 +646,10 @@ fn main() {
                         }
                         event::VirtualKeyCode::I => {
                             if key.state == event::ElementState::Pressed {
-                                editor_view.visual_cursor.enter_edit_mode();
-                                window.request_redraw();
+                                if editor_view.visual_cursor.mode() != VisualCursorMode::Edit {
+                                    editor_view.visual_cursor.enter_edit_mode();
+                                    window.request_redraw();
+                                }
                             }
                         }
                         event::VirtualKeyCode::Escape => {
