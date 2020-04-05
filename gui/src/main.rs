@@ -80,6 +80,8 @@ impl VisualCursor {
 }
 
 struct EditorView {
+    top_y: f32,
+    height: u32,
     visual_cursor: VisualCursor,
     buffer: edrus::buffer::Buffer,
     projection_matrix: Matrix4<f32>,
@@ -106,6 +108,8 @@ impl EditorView {
         let eye = Point3::new(0.0, 0.0, -5.0);
 
         Self {
+            top_y: 0 as f32,
+            height: height,
             visual_cursor: VisualCursor::new(0.0, 0.0),
             buffer: edrus::buffer::Buffer::new(filepath).expect("buffer creation failed"),
             projection_matrix: projection_matrix,
@@ -128,6 +132,7 @@ impl EditorView {
     fn scroll_down(&mut self, font_cache: &FontCache) {
         let vmetrics = font_cache.v_metrics();
         let vertical_offset = (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
+        self.top_y += vertical_offset;
         self.eye.y += vertical_offset;
         self.view_matrix = get_view_matrix(&self.eye);
     }
@@ -135,6 +140,7 @@ impl EditorView {
     fn scroll_up(&mut self, font_cache: &FontCache) {
         let vmetrics = font_cache.v_metrics();
         let vertical_offset = (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
+        self.top_y -= vertical_offset;
         self.eye.y -= vertical_offset;
         self.view_matrix = get_view_matrix(&self.eye);
     }
@@ -143,6 +149,11 @@ impl EditorView {
         self.buffer.move_up().map(|new_offset| {
             let hoffset = self.buffer.column(new_offset).expect("should not fail");
             self.visual_cursor.move_up(font_cache, hoffset);
+
+            let closeness_top = self.visual_cursor.position.y - self.top_y;
+            if closeness_top < 0.0 {
+                self.scroll_up(font_cache);
+            }
         })
     }
 
@@ -150,6 +161,15 @@ impl EditorView {
         self.buffer.move_down().map(|new_offset| {
             let hoffset = self.buffer.column(new_offset).expect("should not fail");
             self.visual_cursor.move_down(font_cache, hoffset);
+
+            let vmetrics = font_cache.v_metrics();
+            let vertical_offset = vmetrics.ascent - vmetrics.descent;
+
+            let closeness_bottom = (self.top_y + self.height as f32)
+                - (self.visual_cursor.position.y + vertical_offset);
+            if closeness_bottom < 0.0 {
+                self.scroll_down(font_cache);
+            }
         })
     }
 
