@@ -316,7 +316,7 @@ fn main() {
         limits: wgpu::Limits::default(),
     });
 
-    let font_data: &[u8] = include_bytes!("consola.ttf");
+    let font_data: &[u8] = include_bytes!("../fonts/iosevka-fixed-regular.ttf");
 
     let collection = rusttype::FontCollection::from_bytes(font_data).unwrap();
     let font = collection.into_font().unwrap();
