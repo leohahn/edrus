@@ -48,9 +48,11 @@ struct CurrentPiece {
 
 impl SimplePieceTable {
     pub fn new(text: String) -> Self {
-        let text_len = text.len();
+        // TODO: consider supporting \r\n here instead of only \n.
+        let formatted_text = text.replace("\r\n", "\n");
+        let text_len = formatted_text.len();
         SimplePieceTable {
-            original: text,
+            original: formatted_text,
             added: String::new(),
             pieces: vec![Piece {
                 buffer: Buffer::Original,
@@ -139,7 +141,11 @@ impl SimplePieceTable {
             {
                 let end_offset = if first_call {
                     first_call = false;
-                    piece_offset
+                    if piece_offset == 0 {
+                        continue;
+                    } else {
+                        piece_offset
+                    }
                 } else {
                     piece.len
                 };
@@ -148,24 +154,29 @@ impl SimplePieceTable {
                 let mut slice = &buffer.as_bytes()[piece.start..piece.start + end_offset];
 
                 while let Some(line_offset) = memrchr('\n' as u8, slice) {
-                    offsets.push((index, line_offset));
+                    offsets.push((index, line_offset + piece.start));
                     curr_num_lines -= 1;
+                    if curr_num_lines == 0 {
+                        break;
+                    }
                     slice = &buffer.as_bytes()[piece.start..piece.start + line_offset];
-                }
-                if curr_num_lines == 0 {
-                    break;
                 }
             }
         } else {
             for (index, piece) in self.pieces.iter().enumerate().skip(piece_index) {
                 let start_offset = if first_call {
                     first_call = false;
-                    piece_offset
+                    if piece_offset + 1 > piece.len {
+                        continue;
+                    } else {
+                        piece_offset + 1
+                    }
                 } else {
                     0
                 };
 
                 let piece_start = piece.start + start_offset;
+
                 let buffer = self.get_buffer(piece);
                 let mut slice =
                     &buffer.as_bytes()[piece_start..piece_start + (piece.len - start_offset)];
@@ -225,8 +236,14 @@ impl TextBuffer for SimplePieceTable {
     fn column_for_offset(&self, offset: usize) -> Option<HorizontalOffset> {
         let current_piece = self.get_current_piece(offset)?;
         let piece_offset = offset - current_piece.len_until;
+        let buffer = self.get_buffer(&current_piece.piece);
+
+        if buffer.as_bytes()[current_piece.piece.start + piece_offset] == '\n' as u8 {
+            return Some(HorizontalOffset(1));
+        }
 
         let prev_lines = self.scan_lines(-1, current_piece.index, piece_offset);
+
         if prev_lines.is_empty() {
             return Some(HorizontalOffset(offset + 1));
         }
@@ -371,8 +388,15 @@ impl TextBuffer for SimplePieceTable {
 
         let (first_piece_index, first_newline_offset) = lines[0];
 
-        let current_col = {
+        let current_piece_buffer = self.get_buffer(&current_piece.piece);
+        let is_current_char_newline =
+            current_piece_buffer.as_bytes()[current_piece.piece.start + piece_offset] == '\n' as u8;
+
+        let current_col = if is_current_char_newline {
+            1
+        } else {
             let mut col = 0;
+
             for (i, piece) in self
                 .pieces
                 .iter()
@@ -401,18 +425,35 @@ impl TextBuffer for SimplePieceTable {
             // NOTE: We take current_col - 1 here since the col starts at 1 instead of 0.
             // TODO: maybe change columns internally to start at 0?
             Some((current_col - 1).min(first_newline_offset - 1))
+        } else if is_current_char_newline {
+            let is_last_char = current_piece.index == self.pieces.len() - 1
+                && piece_offset == current_piece.piece.len - 1;
+            let (index, offset) = if is_last_char {
+                let first_piece = &self.pieces[first_piece_index];
+                if first_newline_offset == first_piece.len - 1 {
+                    // If the newline is the last char of the piece, we return the next,
+                    // piece 0 offset.
+                    (first_piece_index + 1, 0)
+                } else {
+                    (first_piece_index, first_newline_offset + 1)
+                }
+            } else {
+                let (second_piece_index, second_newline_offset) = lines[1];
+                let second_piece = &self.pieces[second_piece_index];
+                if second_newline_offset == second_piece.len - 1 {
+                    // If the newline is the last char of the piece, we return the next,
+                    // piece 0 offset.
+                    (second_piece_index + 1, 0)
+                } else {
+                    (second_piece_index, second_newline_offset + 1)
+                }
+            };
+            let abs = self.get_absolute_offset(index, offset);
+            Some(abs)
         } else {
             let (second_piece_index, second_newline_offset) = lines[1];
-
-            dbg!(
-                (first_piece_index, first_newline_offset),
-                (second_piece_index, second_newline_offset)
-            );
-
             let mut correct_offset = second_newline_offset + current_col;
             let mut correct_index = second_piece_index;
-
-            dbg!(current_col, correct_index, correct_offset);
 
             if self.is_on_the_right_of(
                 first_piece_index,
@@ -440,11 +481,7 @@ impl TextBuffer for SimplePieceTable {
                     }
                 }
 
-                dbg!(first_piece_index, first_newline_offset);
-                dbg!(second_piece_index, second_newline_offset);
-                dbg!(correct_index, correct_offset);
-
-                if dbg!(correct_index) == dbg!(first_piece_index) {
+                if correct_index == first_piece_index {
                     let abs = self.get_absolute_offset(
                         correct_index,
                         correct_offset.min(first_newline_offset - 1),
@@ -474,14 +511,16 @@ impl TextBuffer for SimplePieceTable {
         }
 
         let current_piece_buffer = self.get_buffer(&current_piece.piece);
+        let current_char_is_newline = current_piece_buffer.as_bytes()[piece_offset] == '\n' as u8;
+
+        if current_char_is_newline {
+            return Some(offset + 1);
+        }
 
         let current_col = if prev_lines.is_empty() {
             // The current line is the first line.
             offset + 1
-        } else if current_piece_buffer.as_bytes()[piece_offset] as char == '\n' {
-            let (prev_line_index, prev_line_offset) = prev_lines[0];
-            assert_eq!(prev_line_index, current_piece.index);
-            assert_eq!(prev_line_offset, piece_offset - 1);
+        } else if current_char_is_newline {
             1
         } else {
             let (prev_line_index, prev_line_offset) = prev_lines[0];
@@ -965,7 +1004,7 @@ mod test {
 
     #[test]
     fn scan_lines_multiple_lines_on_same_piece() {
-        let text = "the dog\nis awesome.\nI really like the dog.\nHello";
+        let text = "the dog\nis awesome.\nI really like the dog.\nHello\n";
         let table = SimplePieceTable::new(text.to_owned());
 
         {
@@ -979,6 +1018,30 @@ mod test {
         {
             let lines = table.scan_lines(3, 0, 0);
             assert_eq!(lines, vec![(0, 7), (0, 19), (0, 42)]);
+        }
+        {
+            let lines = table.scan_lines(-2, 0, 48);
+            assert_eq!(lines, vec![(0, 42), (0, 19)]);
+        }
+        {
+            let lines = table.scan_lines(-1, 0, 8);
+            assert_eq!(lines, vec![(0, 7)]);
+        }
+
+        let text = r#"extern crate memchr;
+pub mod buffer;
+pub mod error;
+pub mod text_buffer;
+mod tree;
+"#;
+        let table = SimplePieceTable::new(text.to_owned());
+        {
+            assert_eq!(table.char_at(82), Some('\n'));
+            let lines = table.scan_lines(-2, 0, 82);
+            assert_eq!(lines, vec![(0, 72), (0, 51)]);
+
+            assert_eq!(table.prev_line(82), Some(73));
+            assert_eq!(table.char_at(73), Some('m'));
         }
     }
 
@@ -1022,6 +1085,10 @@ mod test {
         {
             let lines = table.scan_lines(-1, 1, 0);
             assert_eq!(lines, vec![(0, 7)]);
+        }
+        {
+            let lines = table.scan_lines(-1, 2, 16);
+            assert_eq!(lines, vec![(1, 8), (0, 7)]);
         }
     }
 
@@ -1173,7 +1240,8 @@ dependencies = []
 
 [[package]]
 name = "alga"
-version = "0.9.3""#;
+version = "0.9.3"
+"#;
 
         let table = SimplePieceTable::new(table_str.to_owned());
         {
@@ -1196,6 +1264,15 @@ version = "0.9.3""#;
         {
             assert_eq!(table.char_at(67), Some(']'));
             assert_eq!(table.prev_line(67), Some(56));
+        }
+        {
+            assert_eq!(table.char_at(94), Some('0'));
+            assert_eq!(table.next_line(94), Some(100));
+            assert_eq!(table.column_for_offset(100), Some(HorizontalOffset(1)));
+        }
+        {
+            assert_eq!(table.char_at(100), Some('\n'));
+            assert_eq!(table.next_line(100), None);
         }
     }
 }
