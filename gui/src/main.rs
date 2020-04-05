@@ -564,7 +564,7 @@ fn main() {
                         screen_position: (0.0, 0.0),
                         color: [1.0, 1.0, 1.0, 1.0],
                         scale: Scale { x: 16.0, y: 16.0 },
-                        bounds: (sc_descriptor.width as f32, sc_descriptor.height as f32),
+                        bounds: (sc_descriptor.width as f32, std::f32::INFINITY),
                         ..Section::default()
                     });
 
