@@ -77,7 +77,7 @@ impl Buffer {
         self.piece_table.next_line(self.cursor.pos).map(|offset| {
             println!("===== move_down =====");
             println!(
-                "prev char: offset={} char={}",
+                "prev char: offset={} char={:?}",
                 self.cursor.pos,
                 self.current_char()
             );
@@ -88,7 +88,7 @@ impl Buffer {
                 .expect("should not fail")
                 .0;
             println!(
-                "next char: offset={} char={}",
+                "next char: offset={} char={:?}",
                 self.cursor.pos,
                 self.current_char()
             );
@@ -100,7 +100,7 @@ impl Buffer {
     pub fn move_up(&mut self) -> Option<usize> {
         self.piece_table.prev_line(self.cursor.pos).map(|offset| {
             println!("===== move_up =====");
-            println!("prev char: {}", self.current_char());
+            println!("prev char: {:?}", self.current_char());
             self.cursor.pos = offset;
             self.cursor.col = self
                 .piece_table
@@ -108,7 +108,7 @@ impl Buffer {
                 .expect("should not fail")
                 .0;
             println!(
-                "next char: {}, col={}",
+                "next char: {:?}, col={}",
                 self.current_char(),
                 self.cursor.col
             );
