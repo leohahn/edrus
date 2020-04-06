@@ -10,7 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 wgpu = "0.4"
-winit = "0.21"
+winit = "0.22"
 env_logger = "0.7.1"
 glsl-to-spirv = "0.1"
 edrus = { path = "../editor" }

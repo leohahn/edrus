@@ -484,6 +484,12 @@ fn main() {
                 editor_view.update_size(sc_descriptor.width, sc_descriptor.height);
                 window.request_redraw();
             }
+            event::Event::WindowEvent {
+                event: event::WindowEvent::ModifiersChanged(modifiers_state),
+                ..
+            } => {
+                ctrl_pressed = modifiers_state.ctrl();
+            }
             event::Event::RedrawRequested(_) => {
                 let mut encoder =
                     device.create_command_encoder(&wgpu::CommandEncoderDescriptor { todo: 0 });
@@ -583,7 +589,7 @@ fn main() {
                         text: editor_view.contents(),
                         screen_position: (0.0, 0.0),
                         color: [1.0, 1.0, 1.0, 1.0],
-                        scale: Scale { x: 16.0, y: 16.0 },
+                        scale: font_scale,
                         bounds: (sc_descriptor.width as f32, std::f32::INFINITY),
                         ..Section::default()
                     });
@@ -624,12 +630,6 @@ fn main() {
                 }
                 _ => panic!("this scroll format is not yet supported"),
             },
-            event::Event::DeviceEvent {
-                event: event::DeviceEvent::ModifiersChanged(modifiers_state),
-                ..
-            } => {
-                ctrl_pressed = modifiers_state.ctrl();
-            }
             event::Event::DeviceEvent {
                 event: event::DeviceEvent::Key(key),
                 ..
