@@ -117,6 +117,13 @@ impl Buffer {
         })
     }
 
+    pub fn insert_before(&mut self, text: &str) {
+        self.piece_table
+            .insert(self.cursor.pos, text)
+            .expect("insertion failed");
+        self.contents = self.piece_table.contents();
+    }
+
     pub fn column(&self, offset: usize) -> Option<HorizontalOffset> {
         self.piece_table.column_for_offset(offset)
     }

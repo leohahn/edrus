@@ -14,6 +14,7 @@ use std::rc::Rc;
 use wgpu_glyph::{GlyphBrushBuilder, Scale, Section};
 use winit::{
     event,
+    event::VirtualKeyCode,
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
@@ -79,6 +80,11 @@ impl VisualCursor {
     }
 }
 
+fn get_view_matrix(eye: &Point3<f32>) -> Matrix4<f32> {
+    let target = eye + Vector3::new(0.0, 0.0, 1.0);
+    na::Matrix4::look_at_rh(eye, &target, &-Vector3::y())
+}
+
 struct EditorView {
     top_y: f32,
     height: u32,
@@ -87,11 +93,6 @@ struct EditorView {
     projection_matrix: Matrix4<f32>,
     view_matrix: Matrix4<f32>,
     eye: Point3<f32>,
-}
-
-fn get_view_matrix(eye: &Point3<f32>) -> Matrix4<f32> {
-    let target = eye + Vector3::new(0.0, 0.0, 1.0);
-    na::Matrix4::look_at_rh(eye, &target, &-Vector3::y())
 }
 
 impl EditorView {
@@ -205,6 +206,10 @@ impl EditorView {
             0.0, 0.0, 0.0, 1.0,
         );
         mx_correction * self.projection_matrix * self.view_matrix
+    }
+
+    fn insert_text(&mut self, text: &str) {
+        self.buffer.insert_before(text);
     }
 }
 
@@ -634,37 +639,95 @@ fn main() {
                 event: event::DeviceEvent::Key(key),
                 ..
             } => {
-                if let Some(vk) = key.virtual_keycode {
-                    match vk {
-                        event::VirtualKeyCode::J => {
+                if let None = key.virtual_keycode {
+                    return;
+                }
+
+                let virtual_keycode = key.virtual_keycode.unwrap();
+
+                if editor_view.visual_cursor.mode() == VisualCursorMode::Edit
+                    && key.state == event::ElementState::Pressed
+                {
+                    match virtual_keycode {
+                        VirtualKeyCode::A => editor_view.insert_text("a"),
+                        VirtualKeyCode::B => editor_view.insert_text("b"),
+                        VirtualKeyCode::C => editor_view.insert_text("c"),
+                        VirtualKeyCode::D => editor_view.insert_text("d"),
+                        VirtualKeyCode::E => editor_view.insert_text("e"),
+                        VirtualKeyCode::F => editor_view.insert_text("f"),
+                        VirtualKeyCode::G => editor_view.insert_text("g"),
+                        VirtualKeyCode::H => editor_view.insert_text("h"),
+                        VirtualKeyCode::I => editor_view.insert_text("i"),
+                        VirtualKeyCode::J => editor_view.insert_text("j"),
+                        VirtualKeyCode::K => editor_view.insert_text("k"),
+                        VirtualKeyCode::L => editor_view.insert_text("l"),
+                        VirtualKeyCode::M => editor_view.insert_text("m"),
+                        VirtualKeyCode::N => editor_view.insert_text("n"),
+                        VirtualKeyCode::O => editor_view.insert_text("o"),
+                        VirtualKeyCode::P => editor_view.insert_text("p"),
+                        VirtualKeyCode::Q => editor_view.insert_text("q"),
+                        VirtualKeyCode::R => editor_view.insert_text("r"),
+                        VirtualKeyCode::S => editor_view.insert_text("s"),
+                        VirtualKeyCode::T => editor_view.insert_text("t"),
+                        VirtualKeyCode::U => editor_view.insert_text("u"),
+                        VirtualKeyCode::V => editor_view.insert_text("v"),
+                        VirtualKeyCode::X => editor_view.insert_text("x"),
+                        VirtualKeyCode::W => editor_view.insert_text("w"),
+                        VirtualKeyCode::Y => editor_view.insert_text("y"),
+                        VirtualKeyCode::Z => editor_view.insert_text("z"),
+                        VirtualKeyCode::Key0 => editor_view.insert_text("0"),
+                        VirtualKeyCode::Key1 => editor_view.insert_text("1"),
+                        VirtualKeyCode::Key2 => editor_view.insert_text("2"),
+                        VirtualKeyCode::Key3 => editor_view.insert_text("3"),
+                        VirtualKeyCode::Key4 => editor_view.insert_text("4"),
+                        VirtualKeyCode::Key5 => editor_view.insert_text("5"),
+                        VirtualKeyCode::Key6 => editor_view.insert_text("6"),
+                        VirtualKeyCode::Key7 => editor_view.insert_text("7"),
+                        VirtualKeyCode::Key8 => editor_view.insert_text("8"),
+                        VirtualKeyCode::Key9 => editor_view.insert_text("9"),
+                        VirtualKeyCode::Escape => {
+                            if editor_view.visual_cursor.mode() != VisualCursorMode::Normal {
+                                editor_view.visual_cursor.enter_normal_mode();
+                                editor_view.move_left(&mut font_cache);
+                                window.request_redraw();
+                            }
+                        }
+                        _ => (),
+                    };
+                    window.request_redraw();
+                }
+
+                if editor_view.visual_cursor.mode() == VisualCursorMode::Normal {
+                    match virtual_keycode {
+                        VirtualKeyCode::J => {
                             if key.state == event::ElementState::Pressed {
                                 editor_view.move_down(&mut font_cache).map(|_| {
                                     window.request_redraw();
                                 });
                             }
                         }
-                        event::VirtualKeyCode::K => {
+                        VirtualKeyCode::K => {
                             if key.state == event::ElementState::Pressed {
                                 editor_view.move_up(&mut font_cache).map(|_| {
                                     window.request_redraw();
                                 });
                             }
                         }
-                        event::VirtualKeyCode::H => {
+                        VirtualKeyCode::H => {
                             if key.state == event::ElementState::Pressed {
                                 editor_view.move_left(&mut font_cache).map(|_| {
                                     window.request_redraw();
                                 });
                             }
                         }
-                        event::VirtualKeyCode::L => {
+                        VirtualKeyCode::L => {
                             if key.state == event::ElementState::Pressed {
                                 editor_view.move_right(&mut font_cache).map(|_| {
                                     window.request_redraw();
                                 });
                             }
                         }
-                        event::VirtualKeyCode::I => {
+                        VirtualKeyCode::I => {
                             if key.state == event::ElementState::Pressed {
                                 if editor_view.visual_cursor.mode() != VisualCursorMode::Edit {
                                     editor_view.visual_cursor.enter_edit_mode();
@@ -672,22 +735,13 @@ fn main() {
                                 }
                             }
                         }
-                        event::VirtualKeyCode::Escape => {
-                            if key.state == event::ElementState::Pressed {
-                                if editor_view.visual_cursor.mode() != VisualCursorMode::Normal {
-                                    editor_view.visual_cursor.enter_normal_mode();
-                                    editor_view.move_left(&mut font_cache);
-                                    window.request_redraw();
-                                }
-                            }
-                        }
-                        event::VirtualKeyCode::E => {
+                        VirtualKeyCode::E => {
                             if ctrl_pressed {
                                 editor_view.scroll_down(&font_cache);
                                 window.request_redraw();
                             }
                         }
-                        event::VirtualKeyCode::Y => {
+                        VirtualKeyCode::Y => {
                             if ctrl_pressed {
                                 editor_view.scroll_up(&font_cache);
                                 window.request_redraw();
@@ -703,7 +757,7 @@ fn main() {
             } => {
                 *control_flow = ControlFlow::Exit;
             }
-            _ => {}
+            _ => (),
         }
     });
 }
