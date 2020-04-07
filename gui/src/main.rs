@@ -635,8 +635,12 @@ fn main() {
                 }
                 _ => panic!("this scroll format is not yet supported"),
             },
-            event::Event::DeviceEvent {
-                event: event::DeviceEvent::Key(key),
+            event::Event::WindowEvent {
+                event:
+                    event::WindowEvent::KeyboardInput {
+                        input: key,
+                        ..
+                    },
                 ..
             } => {
                 if let None = key.virtual_keycode {
