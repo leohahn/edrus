@@ -1,11 +1,14 @@
 extern crate edrus;
 extern crate env_logger;
+extern crate flame;
+extern crate flamer;
 extern crate log;
 extern crate nalgebra as na;
 extern crate rusttype;
 extern crate winit;
 
 use edrus::text_buffer::HorizontalOffset;
+use flamer::flame;
 use na::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
 use std::collections::HashMap;
 use std::mem;
@@ -117,6 +120,14 @@ impl EditorView {
             view_matrix: get_view_matrix(&eye),
             eye: eye,
         }
+    }
+
+    fn top_y(&self) -> f32 {
+        self.top_y
+    }
+
+    fn height(&self) -> u32 {
+        self.height
     }
 
     fn update_size(&mut self, width: u32, height: u32) {
@@ -489,12 +500,6 @@ fn main() {
                 editor_view.update_size(sc_descriptor.width, sc_descriptor.height);
                 window.request_redraw();
             }
-            event::Event::WindowEvent {
-                event: event::WindowEvent::ModifiersChanged(modifiers_state),
-                ..
-            } => {
-                ctrl_pressed = modifiers_state.ctrl();
-            }
             event::Event::RedrawRequested(_) => {
                 let mut encoder =
                     device.create_command_encoder(&wgpu::CommandEncoderDescriptor { todo: 0 });
@@ -590,14 +595,51 @@ fn main() {
 
                 // Render the text
                 {
-                    glyph_brush.queue(Section {
-                        text: editor_view.contents(),
-                        screen_position: (0.0, 0.0),
-                        color: [1.0, 1.0, 1.0, 1.0],
-                        scale: font_scale,
-                        bounds: (sc_descriptor.width as f32, std::f32::INFINITY),
-                        ..Section::default()
-                    });
+                    {
+                        let _guard = flame::start_guard("process text");
+                        let now = std::time::Instant::now();
+
+                        let contents = editor_view.contents();
+                        let lines = contents.split('\n');
+
+                        let vmetrics = font_cache.v_metrics();
+                        let line_height = vmetrics.ascent - vmetrics.descent;
+
+                        let vertical_offset =
+                            (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
+                        let mut line_y = 0.0;
+
+                        // dbg!(editor_view.top_y());
+                        // dbg!(editor_view.top_y() + editor_view.height() as f32);
+                        // dbg!(contents.len());
+
+                        for line in lines {
+                            if (line_y + line_height) < editor_view.top_y() {
+                                // The bottom of the line is not visible, therefore
+                                // the line will not be rendered.
+                                line_y += line_height + vmetrics.line_gap;
+                                continue;
+                            }
+
+                            // Avoid iterating over all lines if they are not going to be drawn.
+                            if line_y > editor_view.top_y() + editor_view.height() as f32 {
+                                break;
+                            }
+
+                            glyph_brush.queue(Section {
+                                text: line,
+                                screen_position: (0.0, line_y),
+                                color: [1.0, 1.0, 1.0, 1.0],
+                                scale: font_scale,
+                                bounds: (sc_descriptor.width as f32, sc_descriptor.height as f32),
+                                ..Section::default()
+                            });
+
+                            line_y += line_height + vmetrics.line_gap;
+                        }
+
+                        println!("process text used {} ms", now.elapsed().as_millis());
+                    }
 
                     let view_proj: [f32; 16] = {
                         let mut arr: [f32; 16] = Default::default();
@@ -606,14 +648,18 @@ fn main() {
                     };
 
                     // Draw the text!
-                    glyph_brush
-                        .draw_queued_with_transform(
-                            &mut device,
-                            &mut encoder,
-                            &frame.view,
-                            view_proj,
-                        )
-                        .expect("Draw queued");
+
+                    {
+                        let _guard = flame::start_guard("draw text");
+                        glyph_brush
+                            .draw_queued_with_transform(
+                                &mut device,
+                                &mut encoder,
+                                &frame.view,
+                                view_proj,
+                            )
+                            .expect("Draw queued");
+                    }
                 }
 
                 queue.submit(&[encoder.finish()]);
@@ -636,11 +682,13 @@ fn main() {
                 _ => panic!("this scroll format is not yet supported"),
             },
             event::Event::WindowEvent {
-                event:
-                    event::WindowEvent::KeyboardInput {
-                        input: key,
-                        ..
-                    },
+                event: event::WindowEvent::ModifiersChanged(modifiers_state),
+                ..
+            } => {
+                ctrl_pressed = modifiers_state.ctrl();
+            }
+            event::Event::WindowEvent {
+                event: event::WindowEvent::KeyboardInput { input: key, .. },
                 ..
             } => {
                 if let None = key.virtual_keycode {
@@ -760,6 +808,8 @@ fn main() {
                 ..
             } => {
                 *control_flow = ControlFlow::Exit;
+                println!("saving flamegraph");
+                flame::dump_html(std::fs::File::create("flamegraph.html").unwrap()).unwrap();
             }
             _ => (),
         }

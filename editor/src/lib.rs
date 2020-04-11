@@ -1,3 +1,5 @@
+extern crate flame;
+extern crate flamer;
 extern crate memchr;
 
 pub mod buffer;

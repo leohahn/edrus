@@ -19,6 +19,11 @@ nalgebra = { version = "0.19.0", features = ["serde-serialize", "mint"] }
 wgpu_glyph = "0.7"
 glyph_brush = "0.6.3"
 rusttype = "0.8.2"
+flame = "0.2.2"
+flamer = "0.3"
 
 [dev-dependencies]
 shaderc = "0.6"
+
+[profile.release]
+debug = true

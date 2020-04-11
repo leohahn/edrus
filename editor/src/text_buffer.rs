@@ -47,6 +47,7 @@ struct CurrentPiece {
 }
 
 impl SimplePieceTable {
+    #[flamer::flame]
     pub fn new(text: String) -> Self {
         // TODO: consider supporting \r\n here instead of only \n.
         let formatted_text = text.replace("\r\n", "\n");
@@ -62,6 +63,7 @@ impl SimplePieceTable {
         }
     }
 
+    #[flamer::flame]
     fn find_prev_offset(offset: usize, buf: &str) -> usize {
         let mut prev_offset = offset - 1;
         while !buf.is_char_boundary(prev_offset) {
@@ -71,6 +73,7 @@ impl SimplePieceTable {
         prev_offset
     }
 
+    #[flamer::flame]
     fn get_buffer(&self, piece: &Piece) -> &str {
         match piece.buffer {
             Buffer::Original => &self.original,
@@ -78,6 +81,7 @@ impl SimplePieceTable {
         }
     }
 
+    #[flamer::flame]
     fn display_piece(&self, piece: &Piece) -> String {
         let b = self.get_buffer(piece);
         format!(
@@ -88,6 +92,7 @@ impl SimplePieceTable {
         )
     }
 
+    #[flamer::flame]
     fn get_current_piece(&self, offset: usize) -> Option<CurrentPiece> {
         let mut total_offset = 0;
         for (idx, piece) in self.pieces.iter().enumerate() {
@@ -103,6 +108,7 @@ impl SimplePieceTable {
         None
     }
 
+    #[flamer::flame]
     fn get_absolute_offset(&self, piece_index: usize, piece_offset: usize) -> usize {
         assert!(piece_index < self.pieces.len());
         let mut offset = 0;
@@ -117,6 +123,7 @@ impl SimplePieceTable {
         offset
     }
 
+    #[flamer::flame]
     fn scan_lines(
         &self,
         num_lines: isize,
@@ -207,6 +214,7 @@ impl SimplePieceTable {
         offsets
     }
 
+    #[flamer::flame]
     fn is_on_the_right_of(
         &self,
         index: usize,
@@ -233,6 +241,7 @@ fn len_utf8_from_first_byte(b: u8) -> usize {
 }
 
 impl TextBuffer for SimplePieceTable {
+    #[flamer::flame]
     fn column_for_offset(&self, offset: usize) -> Option<HorizontalOffset> {
         let current_piece = self.get_current_piece(offset)?;
         let piece_offset = offset - current_piece.len_until;
@@ -279,6 +288,7 @@ impl TextBuffer for SimplePieceTable {
         Some(HorizontalOffset(col_offset))
     }
 
+    #[flamer::flame]
     fn char_at(&self, offset: usize) -> Option<char> {
         // FIXME(lhahn): this method is slow O(n).
         let mut total_len = 0;
@@ -293,6 +303,7 @@ impl TextBuffer for SimplePieceTable {
         None
     }
 
+    #[flamer::flame]
     fn next(&self, offset: usize) -> Option<usize> {
         let current_piece = self.get_current_piece(offset)?;
         let piece_offset = offset - current_piece.len_until;
@@ -332,6 +343,7 @@ impl TextBuffer for SimplePieceTable {
         Some(current_piece.len_until + next_piece_offset)
     }
 
+    #[flamer::flame]
     fn prev(&self, offset: usize) -> Option<usize> {
         let current_piece = self.get_current_piece(offset)?;
         let piece_offset = offset - current_piece.len_until;
@@ -377,6 +389,7 @@ impl TextBuffer for SimplePieceTable {
         }
     }
 
+    #[flamer::flame]
     fn prev_line(&self, offset: usize) -> Option<usize> {
         let current_piece = self.get_current_piece(offset)?;
         let piece_offset = offset - current_piece.len_until;
@@ -500,6 +513,7 @@ impl TextBuffer for SimplePieceTable {
         }
     }
 
+    #[flamer::flame]
     fn next_line(&self, offset: usize) -> Option<usize> {
         let current_piece = self.get_current_piece(offset)?;
         let piece_offset = offset - current_piece.len_until;
@@ -592,6 +606,7 @@ impl TextBuffer for SimplePieceTable {
         None
     }
 
+    #[flamer::flame]
     fn insert(&mut self, pos: usize, text: &str) -> Result<(), Error> {
         let added_start = self.added.len();
         self.added.push_str(text);
@@ -669,6 +684,7 @@ impl TextBuffer for SimplePieceTable {
         Ok(())
     }
 
+    #[flamer::flame]
     fn remove(&mut self, range: std::ops::Range<usize>) -> Result<(), Error> {
         let remove_start_pos = range.start;
         let remove_end_pos = range.end;
@@ -752,6 +768,7 @@ impl TextBuffer for SimplePieceTable {
         Ok(())
     }
 
+    #[flamer::flame]
     fn contents(&self) -> String {
         let mut contents = String::new();
 
