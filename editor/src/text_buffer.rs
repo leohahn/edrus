@@ -259,7 +259,7 @@ impl TextBuffer for SimplePieceTable {
 
         let (prev_line_index, prev_line_offset) = prev_lines[0];
         if prev_line_index == current_piece.index {
-            return Some(HorizontalOffset(offset - prev_line_offset));
+            return Some(HorizontalOffset(piece_offset - prev_line_offset));
         }
 
         let mut col_offset = 0;
@@ -1291,5 +1291,33 @@ version = "0.9.3"
             assert_eq!(table.char_at(100), Some('\n'));
             assert_eq!(table.next_line(100), None);
         }
+    }
+
+    #[test]
+    fn insertion_and_movement() -> Result<(), Error> {
+        let table_text = r#"[workspace]
+members = [
+    "editor",
+    "gui",
+]"#;
+        let mut table = SimplePieceTable::new(table_text.to_owned());
+
+        {
+            assert_eq!(table.column_for_offset(0), Some(HorizontalOffset(1)));
+            assert_eq!(table.next_line(0), Some(12));
+            assert_eq!(table.char_at(12), Some('m'));
+            assert_eq!(table.column_for_offset(12), Some(HorizontalOffset(1)));
+        }
+
+        table.insert(0, "i")?;
+
+        {
+            assert_eq!(table.column_for_offset(0), Some(HorizontalOffset(1)));
+            assert_eq!(table.next_line(0), Some(13));
+            assert_eq!(table.char_at(13), Some('m'));
+            assert_eq!(table.column_for_offset(13), Some(HorizontalOffset(1)));
+        }
+
+        Ok(())
     }
 }
