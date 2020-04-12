@@ -354,10 +354,6 @@ fn main() {
     });
 
     let font_data: &[u8] = include_bytes!("../fonts/iosevka-fixed-regular.ttf");
-
-    let collection = rusttype::FontCollection::from_bytes(font_data).unwrap();
-    let font = collection.into_font().unwrap();
-
     let mut glyph_brush = GlyphBrushBuilder::using_font_bytes(font_data)
         .expect("Load fonts")
         .build(&device, wgpu::TextureFormat::Bgra8UnormSrgb);

@@ -580,6 +580,16 @@ impl TextBuffer for SimplePieceTable {
             let piece_slice =
                 &buffer.as_bytes()[piece.start + start_offset..piece.start + piece.len];
 
+            if correct_index >= self.pieces.len() {
+                // If the correct index is larger than the number of pieces, we return
+                // the last offset.
+                let abs = self.get_absolute_offset(
+                    self.pieces.len() - 1,
+                    self.pieces.last().unwrap().len - 1,
+                );
+                return Some(abs);
+            }
+
             // Try to find a newline or the current column.
             if let Some(newline) = memchr('\n' as u8, piece_slice) {
                 if i == next_line_index && newline == 0 {
@@ -599,8 +609,8 @@ impl TextBuffer for SimplePieceTable {
 
                 let abs = self.get_absolute_offset(i, correct_offset);
                 return Some(abs);
-            } else if correct_offset < piece.len {
-                let abs = self.get_absolute_offset(i, correct_offset);
+            } else if correct_index == i {
+                let abs = self.get_absolute_offset(correct_index, correct_offset);
                 return Some(abs);
             }
         }
@@ -1305,6 +1315,12 @@ members = [
         let mut table = SimplePieceTable::new(table_text.to_owned());
 
         {
+            assert_eq!(table.char_at(46), Some('"'));
+            assert_eq!(table.next_line(46), Some(49));
+            assert_eq!(table.char_at(49), Some(']'));
+        }
+
+        {
             assert_eq!(table.column_for_offset(0), Some(HorizontalOffset(1)));
             assert_eq!(table.next_line(0), Some(12));
             assert_eq!(table.char_at(12), Some('m'));
@@ -1329,6 +1345,12 @@ members = [
             assert_eq!(table.next_line(23), Some(36));
             assert_eq!(table.char_at(36), Some('r'));
             assert_eq!(table.column_for_offset(36), Some(HorizontalOffset(11)));
+        }
+
+        {
+            assert_eq!(table.char_at(10), Some('e'));
+            assert_eq!(table.next_line(10), Some(23));
+            assert_eq!(table.char_at(23), Some('i'));
         }
 
         Ok(())
