@@ -161,7 +161,7 @@ impl SimplePieceTable {
                 let mut slice = &buffer.as_bytes()[piece.start..piece.start + end_offset];
 
                 while let Some(line_offset) = memrchr('\n' as u8, slice) {
-                    offsets.push((index, line_offset + piece.start));
+                    offsets.push((index, line_offset));
                     curr_num_lines -= 1;
                     if curr_num_lines == 0 {
                         break;
@@ -434,10 +434,12 @@ impl TextBuffer for SimplePieceTable {
 
         if lines.len() == 1 {
             // It means that the above line is the first line.
-            assert!(first_piece_index == 0);
             // NOTE: We take current_col - 1 here since the col starts at 1 instead of 0.
             // TODO: maybe change columns internally to start at 0?
-            Some((current_col - 1).min(first_newline_offset - 1))
+            let abs_first_newline_offset =
+                self.get_absolute_offset(first_piece_index, first_newline_offset);
+
+            Some((current_col - 1).min(abs_first_newline_offset - 1))
         } else if is_current_char_newline {
             let is_last_char = current_piece.index == self.pieces.len() - 1
                 && piece_offset == current_piece.piece.len - 1;
@@ -1316,6 +1318,17 @@ members = [
             assert_eq!(table.next_line(0), Some(13));
             assert_eq!(table.char_at(13), Some('m'));
             assert_eq!(table.column_for_offset(13), Some(HorizontalOffset(1)));
+            assert_eq!(table.prev_line(13), Some(0));
+            assert_eq!(table.column_for_offset(0), Some(HorizontalOffset(1)));
+        }
+
+        table.insert(23, "i")?;
+        assert_eq!(table.char_at(24), Some('['));
+
+        {
+            assert_eq!(table.next_line(23), Some(36));
+            assert_eq!(table.char_at(36), Some('r'));
+            assert_eq!(table.column_for_offset(36), Some(HorizontalOffset(11)));
         }
 
         Ok(())
