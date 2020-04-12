@@ -488,7 +488,7 @@ impl TextBuffer for SimplePieceTable {
                 .take(first_piece_index + 1)
                 .skip(second_piece_index)
             {
-                if correct_offset > piece.len {
+                if correct_offset >= piece.len {
                     correct_offset -= piece.len;
                     correct_index += 1;
                     if i != first_piece_index {
@@ -1330,7 +1330,7 @@ members = [
     }
 
     #[test]
-    fn workspace_text_insertion_and_movement() -> Result<(), Error> {
+    fn workspace_text_insertion_and_movement_1() -> Result<(), Error> {
         let mut table = SimplePieceTable::new(WORKSPACE_TEXT.to_owned());
 
         {
@@ -1370,6 +1370,22 @@ members = [
             assert_eq!(table.char_at(10), Some('e'));
             assert_eq!(table.next_line(10), Some(23));
             assert_eq!(table.char_at(23), Some('i'));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_text_insertion_and_movement_2() -> Result<(), Error> {
+        let mut table = SimplePieceTable::new(WORKSPACE_TEXT.to_owned());
+
+        assert_eq!(table.char_at(12), Some('m'));
+        table.insert(12, "i")?;
+        assert_eq!(table.char_at(12), Some('i'));
+
+        {
+            assert_eq!(table.char_at(25), Some(' '));
+            assert_eq!(table.prev_line(25), Some(12));
         }
 
         Ok(())
