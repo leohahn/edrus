@@ -81,9 +81,9 @@ impl KeyState {
         }
     }
 
-    fn was_just_pressed(&self, now: Instant) -> bool {
+    fn was_just_pressed(&self) -> bool {
         match *self {
-            KeyState::InitialDelay { start, .. } if start == now => true,
+            KeyState::InitialDelay { start, .. } if start.elapsed().as_millis() == 0 => true,
             _ => false,
         }
     }
@@ -784,11 +784,13 @@ fn main() {
 
                 let virtual_keycode = key.virtual_keycode.unwrap();
 
-                let now = Instant::now();
-                keyboard.update(now, virtual_keycode, key.state);
+                keyboard.update(Instant::now(), virtual_keycode, key.state);
 
                 let key_state = keyboard.key_state(&virtual_keycode);
-                let should_process_key = key_state.is_repeat() || key_state.was_just_pressed(now);
+                let should_process_key = key_state.is_repeat() || key_state.was_just_pressed();
+
+                dbg!(&key_state);
+                dbg!(should_process_key);
 
                 if editor_view.visual_cursor.mode() == VisualCursorMode::Edit && should_process_key
                 {
