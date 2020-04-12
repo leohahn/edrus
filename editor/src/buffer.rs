@@ -125,6 +125,11 @@ impl Buffer {
     }
 
     pub fn remove_current_char(&mut self) {
+        if self.current_char() == '\n' {
+            println!("cannot remove newline");
+            return;
+        }
+
         self.piece_table
             .remove(self.cursor.pos..self.cursor.pos + 1)
             .expect("remove failed");

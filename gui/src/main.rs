@@ -13,6 +13,7 @@ use na::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
 use std::collections::HashMap;
 use std::mem;
 use std::path::Path;
+use std::time::{Duration, Instant};
 use wgpu_glyph::{GlyphBrushBuilder, Scale, Section};
 use winit::{
     event,
@@ -62,6 +63,97 @@ impl<'a> FontCache<'a> {
 
     fn v_metrics(&self) -> rusttype::VMetrics {
         self.font.v_metrics(self.scale)
+    }
+}
+
+#[derive(Debug, Clone)]
+enum KeyState {
+    InitialDelay { start: Instant, delay: Duration },
+    Repeat { count: u64 },
+    Released,
+}
+
+impl KeyState {
+    fn is_repeat(&self) -> bool {
+        match *self {
+            KeyState::Repeat { count } => true,
+            _ => false,
+        }
+    }
+
+    fn was_just_pressed(&self, now: Instant) -> bool {
+        match *self {
+            KeyState::InitialDelay { start, .. } if start == now => true,
+            _ => false,
+        }
+    }
+}
+
+struct Keyboard {
+    keys: HashMap<VirtualKeyCode, KeyState>,
+    initial_delay: Duration,
+}
+
+impl Keyboard {
+    fn new(initial_delay: Duration) -> Self {
+        Keyboard {
+            keys: HashMap::new(),
+            initial_delay: initial_delay,
+        }
+    }
+
+    fn transition<F>(&mut self, key: VirtualKeyCode, mut func: F)
+    where
+        F: FnMut(&KeyState) -> KeyState,
+    {
+        self.keys
+            .entry(key)
+            .and_modify(|mut state| {
+                let new_state = func(state);
+                *state = new_state;
+            })
+            .or_insert(KeyState::InitialDelay {
+                start: std::time::Instant::now(),
+                delay: self.initial_delay,
+            });
+    }
+
+    fn key_state(&self, virtual_keycode: &VirtualKeyCode) -> &KeyState {
+        self.keys
+            .get(virtual_keycode)
+            .expect("this call should never fail")
+    }
+
+    fn update(&mut self, now: Instant, key: VirtualKeyCode, element_state: event::ElementState) {
+        let initial_delay = self.initial_delay;
+        self.transition(key, |state| match state {
+            KeyState::InitialDelay { start, delay } => {
+                if element_state == event::ElementState::Released {
+                    KeyState::Released
+                } else if now.duration_since(*start) >= *delay {
+                    KeyState::Repeat { count: 1 }
+                } else {
+                    state.clone()
+                }
+            }
+            KeyState::Repeat { count } => {
+                if element_state == event::ElementState::Released {
+                    KeyState::Released
+                } else {
+                    KeyState::Repeat { count: count + 1 }
+                }
+            }
+            KeyState::Released => {
+                if element_state == event::ElementState::Released {
+                    state.clone()
+                } else {
+                    KeyState::InitialDelay {
+                        start: now,
+                        delay: initial_delay,
+                    }
+                }
+            }
+        });
     }
 }
 
@@ -482,6 +574,7 @@ fn main() {
     let mut swap_chain = device.create_swap_chain(&surface, &sc_descriptor);
 
     // let glyph = font.glyph('s');
+    let mut keyboard = Keyboard::new(Duration::from_millis(200));
     let font_scale = Scale { x: 16.0, y: 16.0 };
     let mut font_cache = FontCache::new(font_scale, font_data);
     let mut ctrl_pressed = false;
@@ -691,8 +784,13 @@ fn main() {
 
                 let virtual_keycode = key.virtual_keycode.unwrap();
 
-                if editor_view.visual_cursor.mode() == VisualCursorMode::Edit
-                    && key.state == event::ElementState::Pressed
+                let now = Instant::now();
+                keyboard.update(now, virtual_keycode, key.state);
+
+                let key_state = keyboard.key_state(&virtual_keycode);
+                let should_process_key = key_state.is_repeat() || key_state.was_just_pressed(now);
+
+                if editor_view.visual_cursor.mode() == VisualCursorMode::Edit && should_process_key
                 {
                     match virtual_keycode {
                         VirtualKeyCode::A => editor_view.insert_text("a", &mut font_cache),
@@ -743,7 +841,9 @@ fn main() {
                     window.request_redraw();
                 }
 
-                if editor_view.visual_cursor.mode() == VisualCursorMode::Normal {
+                if editor_view.visual_cursor.mode() == VisualCursorMode::Normal
+                    && should_process_key
+                {
                     match virtual_keycode {
                         VirtualKeyCode::J => {
                             if key.state == event::ElementState::Pressed {
