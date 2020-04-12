@@ -13,7 +13,6 @@ use na::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
 use std::collections::HashMap;
 use std::mem;
 use std::path::Path;
-use std::rc::Rc;
 use wgpu_glyph::{GlyphBrushBuilder, Scale, Section};
 use winit::{
     event,
@@ -222,6 +221,10 @@ impl EditorView {
     fn insert_text(&mut self, text: &str, font_cache: &mut FontCache) {
         self.buffer.insert_before(text);
         self.move_right(font_cache).expect("should not fail");
+    }
+
+    fn remove_current_char(&mut self) {
+        self.buffer.remove_current_char();
     }
 }
 
@@ -602,13 +605,7 @@ fn main() {
                         let vmetrics = font_cache.v_metrics();
                         let line_height = vmetrics.ascent - vmetrics.descent;
 
-                        let vertical_offset =
-                            (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
                         let mut line_y = 0.0;
-
-                        // dbg!(editor_view.top_y());
-                        // dbg!(editor_view.top_y() + editor_view.height() as f32);
-                        // dbg!(contents.len());
 
                         for line in lines {
                             if (line_y + line_height) < editor_view.top_y() {
@@ -795,6 +792,10 @@ fn main() {
                                 editor_view.scroll_up(&font_cache);
                                 window.request_redraw();
                             }
+                        }
+                        VirtualKeyCode::X => {
+                            editor_view.remove_current_char();
+                            window.request_redraw();
                         }
                         _ => {}
                     }

@@ -751,7 +751,7 @@ impl TextBuffer for SimplePieceTable {
             let last_piece = self.pieces[removal.end_index].clone();
 
             // Check if we need to insert a piece at the beginning.
-            if removal.start_pos != first_piece.start {
+            if removal.start_pos != 0 {
                 // Partial removal.
                 let piece_before = Piece {
                     buffer: first_piece.buffer,
@@ -766,7 +766,7 @@ impl TextBuffer for SimplePieceTable {
             if removal.end_pos != last_piece.start + last_piece.len {
                 let piece_after = Piece {
                     buffer: last_piece.buffer,
-                    start: removal.end_pos,
+                    start: last_piece.start + removal.end_pos,
                     len: last_piece.len - removal.end_pos,
                 };
                 self.pieces.insert(removal.end_index + 1, piece_after);
@@ -1305,14 +1305,33 @@ version = "0.9.3"
         }
     }
 
-    #[test]
-    fn insertion_and_movement() -> Result<(), Error> {
-        let table_text = r#"[workspace]
+    const WORKSPACE_TEXT: &str = r#"[workspace]
 members = [
     "editor",
     "gui",
 ]"#;
-        let mut table = SimplePieceTable::new(table_text.to_owned());
+    #[test]
+    fn workspace_text_deletion() -> Result<(), Error> {
+        let mut table = SimplePieceTable::new(WORKSPACE_TEXT.to_owned());
+
+        {
+            table.remove(0..1)?;
+            assert_eq!(
+                table.contents(),
+                "workspace]\nmembers = [\n    \"editor\",\n    \"gui\",\n]"
+            );
+            table.remove(0..1)?;
+            assert_eq!(
+                table.contents(),
+                "orkspace]\nmembers = [\n    \"editor\",\n    \"gui\",\n]"
+            );
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn workspace_text_insertion_and_movement() -> Result<(), Error> {
+        let mut table = SimplePieceTable::new(WORKSPACE_TEXT.to_owned());
 
         {
             assert_eq!(table.char_at(46), Some('"'));

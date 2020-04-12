@@ -124,6 +124,17 @@ impl Buffer {
         self.contents = self.piece_table.contents();
     }
 
+    pub fn remove_current_char(&mut self) {
+        self.piece_table
+            .remove(self.cursor.pos..self.cursor.pos + 1)
+            .expect("remove failed");
+        self.contents = self.piece_table.contents();
+        println!(
+            "new contents after removing in pos={}: {:?}",
+            self.cursor.pos, self.contents
+        );
+    }
+
     pub fn column(&self, offset: usize) -> Option<HorizontalOffset> {
         self.piece_table.column_for_offset(offset)
     }
