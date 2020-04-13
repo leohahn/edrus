@@ -2,6 +2,7 @@ extern crate edrus;
 extern crate env_logger;
 extern crate flame;
 extern crate flamer;
+extern crate gluon;
 extern crate log;
 extern crate nalgebra as na;
 extern crate rusttype;
@@ -9,6 +10,8 @@ extern crate winit;
 
 use edrus::text_buffer::HorizontalOffset;
 use flamer::flame;
+use gluon::vm::api::{Hole, OpaqueValue};
+use gluon::ThreadExt;
 use na::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
 use std::collections::HashMap;
 use std::mem;
@@ -54,10 +57,7 @@ impl<'a> FontCache<'a> {
 
     fn get_glyph(&mut self, c: char) -> &rusttype::ScaledGlyph<'a> {
         let scale = self.scale.clone();
-        let entry = self
-            .hash
-            .entry(c)
-            .or_insert(self.font.glyph(c).scaled(scale));
+        let entry = self.hash.entry(c).or_insert(self.font.glyph(c).scaled(scale));
         entry
     }
 
@@ -268,8 +268,8 @@ impl EditorView {
             let vmetrics = font_cache.v_metrics();
             let vertical_offset = vmetrics.ascent - vmetrics.descent;
 
-            let closeness_bottom = (self.top_y + self.height as f32)
-                - (self.visual_cursor.position.y + vertical_offset);
+            let closeness_bottom =
+                (self.top_y + self.height as f32) - (self.visual_cursor.position.y + vertical_offset);
             if closeness_bottom < 0.0 {
                 self.scroll_down(font_cache);
             }
@@ -337,10 +337,7 @@ impl VisualCursor {
         self.mode = VisualCursorMode::Normal;
     }
 
-    fn x_from_horizontal_offset(
-        horizontal_offset: HorizontalOffset,
-        font_cache: &mut FontCache,
-    ) -> f32 {
+    fn x_from_horizontal_offset(horizontal_offset: HorizontalOffset, font_cache: &mut FontCache) -> f32 {
         assert!(horizontal_offset.0 > 0);
         // FIXME(lhahn): this is a hack, only works because I am using a
         // monospaced font.
@@ -414,6 +411,18 @@ fn main() {
     }
     env_logger::init();
 
+    // Initialize gluon vm
+    let gluon_vm = gluon::new_vm();
+    gluon_vm
+        .run_expr::<OpaqueValue<&gluon::vm::thread::Thread, Hole>>("example", r#" import! std.prelude "#)
+        .unwrap();
+
+    let (res, _) = gluon_vm
+        .run_expr::<String>("example2", "\"abc\" ++ \"def\"")
+        .unwrap();
+
+    println!("Res is {}", res);
+
     let filepath = match std::env::args().nth(1) {
         Some(path) => path,
         None => {
@@ -455,8 +464,7 @@ fn main() {
 
     let vertex_shader = include_bytes!("../shaders/cursor/vertex.spirv");
     let vs_module = device.create_shader_module(
-        &wgpu::read_spirv(std::io::Cursor::new(&vertex_shader[..]))
-            .expect("failed to read vertex shader"),
+        &wgpu::read_spirv(std::io::Cursor::new(&vertex_shader[..])).expect("failed to read vertex shader"),
     );
 
     let fragment_shader = include_bytes!("../shaders/cursor/fragment.spirv");
@@ -480,21 +488,20 @@ fn main() {
         .create_buffer_mapped(cursor_vertex_data.len(), wgpu::BufferUsage::VERTEX)
         .fill_from_slice(&cursor_vertex_data);
 
-    let uniform_bind_group_layout =
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            bindings: &[
-                wgpu::BindGroupLayoutBinding {
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
-                },
-                wgpu::BindGroupLayoutBinding {
-                    binding: 1,
-                    visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
-                },
-            ],
-        });
+    let uniform_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        bindings: &[
+            wgpu::BindGroupLayoutBinding {
+                binding: 0,
+                visibility: wgpu::ShaderStage::FRAGMENT,
+                ty: wgpu::BindingType::UniformBuffer { dynamic: false },
+            },
+            wgpu::BindGroupLayoutBinding {
+                binding: 1,
+                visibility: wgpu::ShaderStage::VERTEX,
+                ty: wgpu::BindingType::UniformBuffer { dynamic: false },
+            },
+        ],
+    });
 
     let uniform_buffer_size = mem::size_of::<UBO>() as wgpu::BufferAddress;
     let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -502,8 +509,7 @@ fn main() {
         usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
     });
 
-    let coordinate_uniform_buffer_size =
-        mem::size_of::<CoordinateUniformBuffer>() as wgpu::BufferAddress;
+    let coordinate_uniform_buffer_size = mem::size_of::<CoordinateUniformBuffer>() as wgpu::BufferAddress;
     let coordinate_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         size: coordinate_uniform_buffer_size,
         usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
@@ -575,7 +581,7 @@ fn main() {
 
     // let glyph = font.glyph('s');
     let mut keyboard = Keyboard::new(Duration::from_millis(200));
-    let font_scale = Scale { x: 16.0, y: 16.0 };
+    let font_scale = Scale { x: 32.0, y: 32.0 };
     let mut font_cache = FontCache::new(font_scale, font_data);
     let mut ctrl_pressed = false;
 
@@ -594,8 +600,7 @@ fn main() {
                 window.request_redraw();
             }
             event::Event::RedrawRequested(_) => {
-                let mut encoder =
-                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor { todo: 0 });
+                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { todo: 0 });
 
                 let frame = swap_chain.get_next_texture();
 
@@ -739,12 +744,7 @@ fn main() {
                     {
                         let _guard = flame::start_guard("draw text");
                         glyph_brush
-                            .draw_queued_with_transform(
-                                &mut device,
-                                &mut encoder,
-                                &frame.view,
-                                view_proj,
-                            )
+                            .draw_queued_with_transform(&mut device, &mut encoder, &frame.view, view_proj)
                             .expect("Draw queued");
                     }
                 }
@@ -792,8 +792,7 @@ fn main() {
                 dbg!(&key_state);
                 dbg!(should_process_key);
 
-                if editor_view.visual_cursor.mode() == VisualCursorMode::Edit && should_process_key
-                {
+                if editor_view.visual_cursor.mode() == VisualCursorMode::Edit && should_process_key {
                     match virtual_keycode {
                         VirtualKeyCode::A => editor_view.insert_text("a", &mut font_cache),
                         VirtualKeyCode::B => editor_view.insert_text("b", &mut font_cache),
@@ -843,9 +842,7 @@ fn main() {
                     window.request_redraw();
                 }
 
-                if editor_view.visual_cursor.mode() == VisualCursorMode::Normal
-                    && should_process_key
-                {
+                if editor_view.visual_cursor.mode() == VisualCursorMode::Normal && should_process_key {
                     match virtual_keycode {
                         VirtualKeyCode::J => {
                             if key.state == event::ElementState::Pressed {

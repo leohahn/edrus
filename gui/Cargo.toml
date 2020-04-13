@@ -21,6 +21,7 @@ glyph_brush = "0.6.3"
 rusttype = "0.8.2"
 flame = "0.2.2"
 flamer = "0.3"
+gluon = "0.13.1"
 
 [dev-dependencies]
 shaderc = "0.6"
