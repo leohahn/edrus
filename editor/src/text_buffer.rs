@@ -52,6 +52,7 @@ impl SimplePieceTable {
         // TODO: consider supporting \r\n here instead of only \n.
         let formatted_text = text.replace("\r\n", "\n");
         let text_len = formatted_text.len();
+        assert!(formatted_text.is_ascii(), "only works with ascii currently");
         SimplePieceTable {
             original: formatted_text,
             added: String::new(),
