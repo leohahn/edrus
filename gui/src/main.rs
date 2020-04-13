@@ -789,9 +789,6 @@ fn main() {
                 let key_state = keyboard.key_state(&virtual_keycode);
                 let should_process_key = key_state.is_repeat() || key_state.was_just_pressed();
 
-                dbg!(&key_state);
-                dbg!(should_process_key);
-
                 if editor_view.visual_cursor.mode() == VisualCursorMode::Edit && should_process_key {
                     match virtual_keycode {
                         VirtualKeyCode::A => editor_view.insert_text("a", &mut font_cache),
