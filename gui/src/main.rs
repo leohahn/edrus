@@ -190,6 +190,7 @@ fn get_view_matrix(eye: &Point3<f32>) -> Matrix4<f32> {
 struct EditorView {
     top_y: f32,
     height: u32,
+    width: u32,
     visual_cursor: VisualCursor,
     buffer: edrus::buffer::Buffer,
     projection_matrix: Matrix4<f32>,
@@ -213,6 +214,7 @@ impl EditorView {
         Self {
             top_y: 0 as f32,
             height: height,
+            width: width,
             visual_cursor: VisualCursor::new(0.0, 0.0),
             buffer: edrus::buffer::Buffer::new(filepath).expect("buffer creation failed"),
             projection_matrix: projection_matrix,
@@ -227,6 +229,14 @@ impl EditorView {
 
     fn height(&self) -> u32 {
         self.height
+    }
+
+    fn set_height(&mut self, height: u32) {
+        self.height = height;
+    }
+
+    fn set_width(&mut self, width: u32) {
+        self.width = width;
     }
 
     fn update_size(&mut self, width: u32, height: u32) {
@@ -631,7 +641,7 @@ fn main() {
 
     // let glyph = font.glyph('s');
     let mut keyboard = Keyboard::new(Duration::from_millis(200));
-    let font_scale = Scale { x: 32.0, y: 32.0 };
+    let font_scale = Scale { x: 16.0, y: 16.0 };
     let mut font_cache = FontCache::new(font_scale, font_data);
     let mut ctrl_pressed = false;
 
@@ -647,6 +657,8 @@ fn main() {
                 sc_descriptor.height = size.height;
                 swap_chain = device.create_swap_chain(&surface, &sc_descriptor);
                 editor_view.update_size(sc_descriptor.width, sc_descriptor.height);
+                editor_view.set_height(size.height);
+                editor_view.set_width(size.width);
                 window.request_redraw();
             }
             event::Event::RedrawRequested(_) => {
