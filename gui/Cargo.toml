@@ -21,7 +21,11 @@ glyph_brush = "0.6.3"
 rusttype = "0.8.2"
 flame = "0.2.2"
 flamer = "0.3"
-gluon = "0.13.1"
+serde = "1.0.0"
+serde_derive = "1.0.0"
+gluon = { version = "0.13.1", features = ["serialization"] }
+gluon_codegen = "0.13.1"
+dirs = "2.0.2"
 
 [dev-dependencies]
 shaderc = "0.6"

@@ -1,19 +1,27 @@
+extern crate dirs;
 extern crate edrus;
 extern crate env_logger;
 extern crate flame;
 extern crate flamer;
 extern crate gluon;
+extern crate gluon_codegen;
 extern crate log;
 extern crate nalgebra as na;
 extern crate rusttype;
+extern crate serde_derive;
 extern crate winit;
 
 use edrus::text_buffer::HorizontalOffset;
 use flamer::flame;
-use gluon::vm::api::{Hole, OpaqueValue};
-use gluon::ThreadExt;
+use gluon::{
+    vm::api::{Hole, OpaqueValue, VmType},
+    ThreadExt,
+};
+use gluon_codegen::{Getable, VmType};
 use na::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
+use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs::DirEntry;
 use std::mem;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -405,23 +413,65 @@ fn create_cursor() -> Vec<Vector2<f32>> {
     ]
 }
 
+#[derive(Getable, VmType, Debug, Serialize, Deserialize)]
+#[gluon(vm_type = "edrus.types.EditorConfig")]
+struct EditorConfig {
+    font_scale: f32,
+}
+
+fn startup_scripting_engine() -> std::io::Result<()> {
+    use gluon::vm::api::typ::make_source;
+    // Initialize gluon vm
+    let gluon_vm = gluon::new_vm();
+    gluon_vm
+        .run_expr::<OpaqueValue<&gluon::vm::thread::Thread, Hole>>("std.prelude", r#" import! std.prelude "#)
+        .unwrap();
+
+    let editor_config_source =
+        make_source::<EditorConfig>(&gluon_vm).expect("should not fail to create type source");
+    gluon_vm
+        .load_script("edrus.types", &editor_config_source)
+        .expect("failed to load script");
+
+    let script_str = r#"
+    let { EditorConfig } = import! "edrus/types.glu"
+    in ()
+    "#;
+
+    gluon_vm
+        .run_expr::<OpaqueValue<&gluon::vm::thread::Thread, Hole>>("example", script_str)
+        .unwrap();
+
+    println!("source is: {}", editor_config_source);
+
+    // Read all scripts from the user scripts.
+    let config_dir = dirs::config_dir().expect("should find a config dir");
+    let edrus_dir = config_dir.join("edrus");
+
+    if std::fs::metadata(&edrus_dir).is_ok() {
+        for entry in std::fs::read_dir(&edrus_dir)? {
+            let entry = entry?;
+            let metadata = entry.metadata()?;
+            if metadata.is_dir() {
+                // TODO: consider not skipping directories.
+                continue;
+            }
+            let path = entry.path();
+            println!("loading script at {:#?}", path);
+            // gluon_vm.load_script();
+        }
+    }
+
+    Ok(())
+}
+
 fn main() {
     if std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", "edrus=debug");
     }
     env_logger::init();
 
-    // Initialize gluon vm
-    let gluon_vm = gluon::new_vm();
-    gluon_vm
-        .run_expr::<OpaqueValue<&gluon::vm::thread::Thread, Hole>>("example", r#" import! std.prelude "#)
-        .unwrap();
-
-    let (res, _) = gluon_vm
-        .run_expr::<String>("example2", "\"abc\" ++ \"def\"")
-        .unwrap();
-
-    println!("Res is {}", res);
+    startup_scripting_engine().expect("failed to startup scripting engine");
 
     let filepath = match std::env::args().nth(1) {
         Some(path) => path,
