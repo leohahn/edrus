@@ -13,20 +13,14 @@ extern crate winit;
 
 use edrus::text_buffer::HorizontalOffset;
 use flamer::flame;
-<<<<<<< HEAD
 use gluon::{
     vm::api::{Hole, OpaqueValue, VmType},
     ThreadExt,
 };
 use gluon_codegen::{Getable, VmType};
-=======
-use gluon::vm::api::{FunctionRef, Hole, OpaqueValue};
-use gluon::ThreadExt;
->>>>>>> scripting setup
 use na::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::DirEntry;
 use std::mem;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -431,79 +425,62 @@ fn create_cursor() -> Vec<Vector2<f32>> {
 #[derive(Getable, VmType, Debug, Serialize, Deserialize)]
 #[gluon(vm_type = "edrus.types.EditorConfig")]
 struct EditorConfig {
-    font_scale: f32,
+    pub font_scale: f32,
 }
 
-fn start_scripting_vm() {
-    use gluon::vm::thread::Thread;
-
-    let gluon_vm = gluon::new_vm();
-    gluon_vm
-        .run_expr::<OpaqueValue<&Thread, Hole>>("example1", r#" import! std.prelude "#)
-        .unwrap();
-    gluon_vm
-        .run_expr::<OpaqueValue<&Thread, Hole>>("example2", r#" type EditorConfig = { font_scale: Float } "#)
-        .unwrap();
-    gluon_vm
-        .run_expr::<OpaqueValue<&Thread, Hole>>(
-            "example3",
-            "let editor_config : EditorConfig = { font_scale: 16.0 }",
-        )
-        .unwrap();
-
-    // let editor_config: FunctionRef<fn() -> i32> = gluon_vm.get_global("create_editor_config").unwrap();
-}
-
-fn main() {
-    if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "edrus=debug");
+impl Default for EditorConfig {
+    fn default() -> Self {
+        Self { font_scale: 24.0 }
     }
-    env_logger::init();
+}
 
-fn startup_scripting_engine() -> std::io::Result<()> {
+fn register_edrus_types(vm: &gluon::RootedThread) {
     use gluon::vm::api::typ::make_source;
+
+    let editor_config_source =
+        make_source::<EditorConfig>(&vm).expect("should not fail to create type source");
+    vm.load_script("edrus.types", &editor_config_source)
+        .expect("failed to load script");
+}
+
+fn get_editor_config(vm: &gluon::RootedThread) -> EditorConfig {
+    use gluon::vm::api::FunctionRef;
+
+    let create_editor_config_result = vm.get_global("init.create_editor_config");
+    if create_editor_config_result.is_err() {
+        EditorConfig::default()
+    } else {
+        let mut create_editor_config: FunctionRef<fn(()) -> EditorConfig> =
+            create_editor_config_result.unwrap();
+        create_editor_config.call(()).unwrap()
+    }
+}
+
+fn startup_scripting_engine() -> std::io::Result<gluon::RootedThread> {
     // Initialize gluon vm
     let gluon_vm = gluon::new_vm();
     gluon_vm
         .run_expr::<OpaqueValue<&gluon::vm::thread::Thread, Hole>>("std.prelude", r#" import! std.prelude "#)
         .unwrap();
 
-    let editor_config_source =
-        make_source::<EditorConfig>(&gluon_vm).expect("should not fail to create type source");
-    gluon_vm
-        .load_script("edrus.types", &editor_config_source)
-        .expect("failed to load script");
+    register_edrus_types(&gluon_vm);
 
-    let script_str = r#"
-    let { EditorConfig } = import! "edrus/types.glu"
-    in ()
-    "#;
-
-    gluon_vm
-        .run_expr::<OpaqueValue<&gluon::vm::thread::Thread, Hole>>("example", script_str)
-        .unwrap();
-
-    println!("source is: {}", editor_config_source);
-
-    // Read all scripts from the user scripts.
     let config_dir = dirs::config_dir().expect("should find a config dir");
     let edrus_dir = config_dir.join("edrus");
 
     if std::fs::metadata(&edrus_dir).is_ok() {
-        for entry in std::fs::read_dir(&edrus_dir)? {
-            let entry = entry?;
-            let metadata = entry.metadata()?;
-            if metadata.is_dir() {
-                // TODO: consider not skipping directories.
-                continue;
-            }
-            let path = entry.path();
-            println!("loading script at {:#?}", path);
-            // gluon_vm.load_script();
-        }
+        let init_script = edrus_dir.join("init.glu");
+        let _ = std::fs::read_to_string(init_script)
+            .map(|script_str| {
+                println!("loading init.glu");
+                gluon_vm
+                    .load_script("init.glu", &script_str)
+                    .expect("should not fail");
+            })
+            .map_err(|_| println!("not loading init.glu, since it does not exist"));
     }
 
-    Ok(())
+    Ok(gluon_vm)
 }
 
 fn main() {
@@ -512,7 +489,9 @@ fn main() {
     }
     env_logger::init();
 
-    startup_scripting_engine().expect("failed to startup scripting engine");
+    let vm = startup_scripting_engine().expect("failed to startup scripting engine");
+
+    let editor_config = get_editor_config(&vm);
 
     let filepath = match std::env::args().nth(1) {
         Some(path) => path,
@@ -671,7 +650,10 @@ fn main() {
     let mut swap_chain = device.create_swap_chain(&surface, &sc_descriptor);
 
     let mut keyboard = Keyboard::new(Duration::from_millis(200));
-    let font_scale = Scale { x: 16.0, y: 16.0 };
+    let font_scale = Scale {
+        x: editor_config.font_scale,
+        y: editor_config.font_scale,
+    };
     let mut font_cache = FontCache::new(font_scale, font_data);
     let mut ctrl_pressed = false;
 
