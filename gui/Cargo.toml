@@ -29,6 +29,3 @@ dirs = "2.0.2"
 
 [dev-dependencies]
 shaderc = "0.6"
-
-[profile.release]
-debug = true

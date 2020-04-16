@@ -3,3 +3,6 @@ members = [
     "editor",
     "gui",
 ]
+
+[profile.release]
+debug = true

@@ -12,6 +12,3 @@ path = "src/lib.rs"
 memchr = "2.3.3"
 flame = "0.2.2"
 flamer = "0.3"
-
-[profile.release]
-debug = true
