@@ -13,11 +13,16 @@ extern crate winit;
 
 use edrus::text_buffer::HorizontalOffset;
 use flamer::flame;
+<<<<<<< HEAD
 use gluon::{
     vm::api::{Hole, OpaqueValue, VmType},
     ThreadExt,
 };
 use gluon_codegen::{Getable, VmType};
+=======
+use gluon::vm::api::{FunctionRef, Hole, OpaqueValue};
+use gluon::ThreadExt;
+>>>>>>> scripting setup
 use na::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -429,6 +434,32 @@ struct EditorConfig {
     font_scale: f32,
 }
 
+fn start_scripting_vm() {
+    use gluon::vm::thread::Thread;
+
+    let gluon_vm = gluon::new_vm();
+    gluon_vm
+        .run_expr::<OpaqueValue<&Thread, Hole>>("example1", r#" import! std.prelude "#)
+        .unwrap();
+    gluon_vm
+        .run_expr::<OpaqueValue<&Thread, Hole>>("example2", r#" type EditorConfig = { font_scale: Float } "#)
+        .unwrap();
+    gluon_vm
+        .run_expr::<OpaqueValue<&Thread, Hole>>(
+            "example3",
+            "let editor_config : EditorConfig = { font_scale: 16.0 }",
+        )
+        .unwrap();
+
+    // let editor_config: FunctionRef<fn() -> i32> = gluon_vm.get_global("create_editor_config").unwrap();
+}
+
+fn main() {
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "edrus=debug");
+    }
+    env_logger::init();
+
 fn startup_scripting_engine() -> std::io::Result<()> {
     use gluon::vm::api::typ::make_source;
     // Initialize gluon vm
@@ -639,7 +670,6 @@ fn main() {
 
     let mut swap_chain = device.create_swap_chain(&surface, &sc_descriptor);
 
-    // let glyph = font.glyph('s');
     let mut keyboard = Keyboard::new(Duration::from_millis(200));
     let font_scale = Scale { x: 16.0, y: 16.0 };
     let mut font_cache = FontCache::new(font_scale, font_data);
