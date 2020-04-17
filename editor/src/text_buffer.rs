@@ -1291,7 +1291,11 @@ version = "0.9.3"
 members = [
     "editor",
     "gui",
-]"#;
+]
+
+[profile.release]
+debug = true
+"#;
     #[test]
     fn workspace_text_deletion() -> Result<(), Error> {
         let mut table = SimplePieceTable::new(WORKSPACE_TEXT.to_owned());
@@ -1300,15 +1304,27 @@ members = [
             table.remove(0..1)?;
             assert_eq!(
                 table.contents(),
-                "workspace]\nmembers = [\n    \"editor\",\n    \"gui\",\n]"
+                "workspace]\nmembers = [\n    \"editor\",\n    \"gui\",\n]\n\n[profile.release]\ndebug = true\n"
             );
             table.remove(0..1)?;
             assert_eq!(
                 table.contents(),
-                "orkspace]\nmembers = [\n    \"editor\",\n    \"gui\",\n]"
+                "orkspace]\nmembers = [\n    \"editor\",\n    \"gui\",\n]\n\n[profile.release]\ndebug = true\n"
             );
             Ok(())
         }
+    }
+
+    #[test]
+    fn insert_and_jump_to_empty_line() -> Result<(), Error> {
+        let mut table = SimplePieceTable::new(WORKSPACE_TEXT.to_owned());
+
+        assert_eq!(table.char_at(49), Some(']'));
+        table.insert(49, "i")?;
+
+        assert_eq!(table.next_line(49), Some(52));
+
+        Ok(())
     }
 
     #[test]
