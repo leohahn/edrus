@@ -11,15 +11,10 @@ extern crate rusttype;
 extern crate serde_derive;
 extern crate winit;
 
+mod scripting;
+
 use edrus::text_buffer::HorizontalOffset;
-use flamer::flame;
-use gluon::{
-    vm::api::{Hole, OpaqueValue, VmType},
-    ThreadExt,
-};
-use gluon_codegen::{Getable, VmType};
 use na::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
-use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::mem;
 use std::path::Path;
@@ -83,7 +78,7 @@ enum KeyState {
 impl KeyState {
     fn is_repeat(&self) -> bool {
         match *self {
-            KeyState::Repeat { count } => true,
+            KeyState::Repeat { .. } => true,
             _ => false,
         }
     }
@@ -115,7 +110,7 @@ impl Keyboard {
     {
         self.keys
             .entry(key)
-            .and_modify(|mut state| {
+            .and_modify(|state| {
                 let new_state = func(state);
                 *state = new_state;
             })
@@ -329,7 +324,7 @@ impl EditorView {
 
     fn insert_text(&mut self, text: &str, font_cache: &mut FontCache) {
         self.buffer.insert_before(text);
-        self.move_right(font_cache).expect("should not fail");
+        let _ = self.move_right(font_cache);
     }
 
     fn remove_current_char(&mut self) {
@@ -422,76 +417,15 @@ fn create_cursor() -> Vec<Vector2<f32>> {
     ]
 }
 
-#[derive(Getable, VmType, Debug, Serialize, Deserialize)]
-#[gluon(vm_type = "edrus.types.EditorConfig")]
-struct EditorConfig {
-    pub font_scale: f32,
-}
-
-impl Default for EditorConfig {
-    fn default() -> Self {
-        Self { font_scale: 24.0 }
-    }
-}
-
-fn register_edrus_types(vm: &gluon::RootedThread) {
-    use gluon::vm::api::typ::make_source;
-
-    let editor_config_source =
-        make_source::<EditorConfig>(&vm).expect("should not fail to create type source");
-    vm.load_script("edrus.types", &editor_config_source)
-        .expect("failed to load script");
-}
-
-fn get_editor_config(vm: &gluon::RootedThread) -> EditorConfig {
-    use gluon::vm::api::FunctionRef;
-
-    let create_editor_config_result = vm.get_global("init.create_editor_config");
-    if create_editor_config_result.is_err() {
-        EditorConfig::default()
-    } else {
-        let mut create_editor_config: FunctionRef<fn(()) -> EditorConfig> =
-            create_editor_config_result.unwrap();
-        create_editor_config.call(()).unwrap()
-    }
-}
-
-fn startup_scripting_engine() -> std::io::Result<gluon::RootedThread> {
-    // Initialize gluon vm
-    let gluon_vm = gluon::new_vm();
-    gluon_vm
-        .run_expr::<OpaqueValue<&gluon::vm::thread::Thread, Hole>>("std.prelude", r#" import! std.prelude "#)
-        .unwrap();
-
-    register_edrus_types(&gluon_vm);
-
-    let config_dir = dirs::config_dir().expect("should find a config dir");
-    let edrus_dir = config_dir.join("edrus");
-
-    if std::fs::metadata(&edrus_dir).is_ok() {
-        let init_script = edrus_dir.join("init.glu");
-        let _ = std::fs::read_to_string(init_script)
-            .map(|script_str| {
-                println!("loading init.glu");
-                gluon_vm
-                    .load_script("init.glu", &script_str)
-                    .expect("should not fail");
-            })
-            .map_err(|_| println!("not loading init.glu, since it does not exist"));
-    }
-
-    Ok(gluon_vm)
-}
-
 fn main() {
     if std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", "edrus=debug");
     }
     env_logger::init();
 
-    let vm = startup_scripting_engine().expect("failed to startup scripting engine");
+    let vm = scripting::startup_engine().expect("failed to startup scripting engine");
 
-    let editor_config = get_editor_config(&vm);
+    let editor_config = scripting::get_editor_config(&vm);
 
     let filepath = match std::env::args().nth(1) {
         Some(path) => path,
