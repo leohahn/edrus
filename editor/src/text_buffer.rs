@@ -186,8 +186,7 @@ impl SimplePieceTable {
                 let piece_start = piece.start + start_offset;
 
                 let buffer = self.get_buffer(piece);
-                let mut slice =
-                    &buffer.as_bytes()[piece_start..piece_start + (piece.len - start_offset)];
+                let mut slice = &buffer.as_bytes()[piece_start..piece_start + (piece.len - start_offset)];
 
                 let mut offset_accum = start_offset;
                 while let Some(line_offset) = memchr('\n' as u8, slice) {
@@ -272,11 +271,7 @@ impl TextBuffer for SimplePieceTable {
             .take(current_piece.index + 1)
             .skip(prev_line_index)
         {
-            let start_piece_offset = if i == prev_line_index {
-                prev_line_offset
-            } else {
-                0
-            };
+            let start_piece_offset = if i == prev_line_index { prev_line_offset } else { 0 };
             let end_offset = if i == current_piece.index {
                 piece_offset
             } else {
@@ -323,17 +318,14 @@ impl TextBuffer for SimplePieceTable {
 
         if next_piece_offset >= current_piece.piece.len {
             // Next piece offset is either on the next piece or outside of the file.
-            return self
-                .pieces
-                .get(current_piece.index + 1)
-                .and_then(|next_piece| {
-                    let buffer = self.get_buffer(next_piece);
-                    if buffer.as_bytes()[next_piece.start] == '\n' as u8 {
-                        None
-                    } else {
-                        Some(current_piece.len_until + next_piece_offset)
-                    }
-                });
+            return self.pieces.get(current_piece.index + 1).and_then(|next_piece| {
+                let buffer = self.get_buffer(next_piece);
+                if buffer.as_bytes()[next_piece.start] == '\n' as u8 {
+                    None
+                } else {
+                    Some(current_piece.len_until + next_piece_offset)
+                }
+            });
         }
 
         if buffer.as_bytes()[current_piece.piece.start + next_piece_offset] == '\n' as u8 {
@@ -362,22 +354,17 @@ impl TextBuffer for SimplePieceTable {
                 return None;
             }
 
-            return self
-                .pieces
-                .get(current_piece.index - 1)
-                .and_then(|prev_piece| {
-                    let buffer = self.get_buffer(prev_piece);
-                    let prev_offset = SimplePieceTable::find_prev_offset(
-                        prev_piece.len,
-                        &buffer[prev_piece.start..],
-                    );
+            return self.pieces.get(current_piece.index - 1).and_then(|prev_piece| {
+                let buffer = self.get_buffer(prev_piece);
+                let prev_offset =
+                    SimplePieceTable::find_prev_offset(prev_piece.len, &buffer[prev_piece.start..]);
 
-                    if buffer.as_bytes()[prev_piece.start + prev_offset] == '\n' as u8 {
-                        None
-                    } else {
-                        Some(current_piece.len_until - (prev_piece.len - prev_offset))
-                    }
-                });
+                if buffer.as_bytes()[prev_piece.start + prev_offset] == '\n' as u8 {
+                    None
+                } else {
+                    Some(current_piece.len_until - (prev_piece.len - prev_offset))
+                }
+            });
         }
 
         let prev_piece_offset =
@@ -437,13 +424,12 @@ impl TextBuffer for SimplePieceTable {
             // It means that the above line is the first line.
             // NOTE: We take current_col - 1 here since the col starts at 1 instead of 0.
             // TODO: maybe change columns internally to start at 0?
-            let abs_first_newline_offset =
-                self.get_absolute_offset(first_piece_index, first_newline_offset);
+            let abs_first_newline_offset = self.get_absolute_offset(first_piece_index, first_newline_offset);
 
             Some((current_col - 1).min(abs_first_newline_offset - 1))
         } else if is_current_char_newline {
-            let is_last_char = current_piece.index == self.pieces.len() - 1
-                && piece_offset == current_piece.piece.len - 1;
+            let is_last_char =
+                current_piece.index == self.pieces.len() - 1 && piece_offset == current_piece.piece.len - 1;
             let (index, offset) = if is_last_char {
                 let first_piece = &self.pieces[first_piece_index];
                 if first_newline_offset == first_piece.len - 1 {
@@ -498,10 +484,8 @@ impl TextBuffer for SimplePieceTable {
                 }
 
                 if correct_index == first_piece_index {
-                    let abs = self.get_absolute_offset(
-                        correct_index,
-                        correct_offset.min(first_newline_offset - 1),
-                    );
+                    let abs =
+                        self.get_absolute_offset(correct_index, correct_offset.min(first_newline_offset - 1));
                     return Some(abs);
                 } else if correct_index > first_piece_index {
                     let abs = self.get_absolute_offset(first_piece_index, first_newline_offset - 1);
@@ -578,16 +562,13 @@ impl TextBuffer for SimplePieceTable {
             }
 
             let buffer = self.get_buffer(piece);
-            let piece_slice =
-                &buffer.as_bytes()[piece.start + start_offset..piece.start + piece.len];
+            let piece_slice = &buffer.as_bytes()[piece.start + start_offset..piece.start + piece.len];
 
             if correct_index >= self.pieces.len() {
                 // If the correct index is larger than the number of pieces, we return
                 // the last offset.
-                let abs = self.get_absolute_offset(
-                    self.pieces.len() - 1,
-                    self.pieces.last().unwrap().len - 1,
-                );
+                let abs =
+                    self.get_absolute_offset(self.pieces.len() - 1, self.pieces.last().unwrap().len - 1);
                 return Some(abs);
             }
 
