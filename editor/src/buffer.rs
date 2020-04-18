@@ -51,7 +51,7 @@ impl Buffer {
                 .column_for_offset(self.cursor.pos)
                 .expect("should not fail")
                 .0;
-            println!("next char: {}", self.current_char());
+            println!("next char: {}, offset={}", self.current_char(), self.cursor.pos);
             println!("=====================");
             offset
         })
@@ -67,7 +67,7 @@ impl Buffer {
                 .column_for_offset(self.cursor.pos)
                 .expect("should not fail")
                 .0;
-            println!("next char: {}", self.current_char());
+            println!("next char: {}, offset={}", self.current_char(), self.cursor.pos);
             println!("=====================");
             offset
         })
@@ -108,9 +108,10 @@ impl Buffer {
                 .expect("should not fail")
                 .0;
             println!(
-                "next char: {:?}, col={}",
+                "next char: {:?}, col={} offset={}",
                 self.current_char(),
-                self.cursor.col
+                self.cursor.col,
+                self.cursor.pos
             );
             println!("=====================");
             offset
