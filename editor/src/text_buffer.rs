@@ -578,7 +578,7 @@ impl TextBuffer for SimplePieceTable {
                     // If right after the first newline we have another newline,
                     // we just return it as the current position.
                     // he[y]\n\nman --> hey\n[\n]man.
-                    let abs = self.get_absolute_offset(i, piece.start + start_offset + newline);
+                    let abs = self.get_absolute_offset(i, start_offset + newline);
                     return Some(abs);
                 }
 
