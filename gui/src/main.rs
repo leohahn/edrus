@@ -330,6 +330,12 @@ impl EditorView {
     fn remove_current_char(&mut self) {
         self.buffer.remove_current_char();
     }
+
+    fn remove_previous_char(&mut self, font_cache: &mut FontCache) {
+        self.move_left(font_cache).map(|_| {
+            self.buffer.remove_current_char();
+        });
+    }
 }
 
 impl VisualCursor {
@@ -835,6 +841,7 @@ fn main() {
                         VirtualKeyCode::Key7 => editor_view.insert_text("7", &mut font_cache),
                         VirtualKeyCode::Key8 => editor_view.insert_text("8", &mut font_cache),
                         VirtualKeyCode::Key9 => editor_view.insert_text("9", &mut font_cache),
+                        VirtualKeyCode::Back => editor_view.remove_previous_char(&mut font_cache),
                         VirtualKeyCode::Escape => {
                             if editor_view.visual_cursor.mode() != VisualCursorMode::Normal {
                                 editor_view.visual_cursor.enter_normal_mode();
