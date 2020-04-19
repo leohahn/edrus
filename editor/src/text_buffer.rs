@@ -512,7 +512,8 @@ impl TextBuffer for SimplePieceTable {
         }
 
         let current_piece_buffer = self.get_buffer(&current_piece.piece);
-        let current_char_is_newline = current_piece_buffer.as_bytes()[piece_offset] == '\n' as u8;
+        let current_char_is_newline =
+            current_piece_buffer.as_bytes()[current_piece.piece.start + piece_offset] == '\n' as u8;
 
         if current_char_is_newline {
             return Some(offset + 1);
@@ -582,7 +583,7 @@ impl TextBuffer for SimplePieceTable {
                     return Some(abs);
                 }
 
-                let max_col_offset = piece.start + start_offset + newline - 1;
+                let max_col_offset = start_offset + newline - 1;
 
                 if i != correct_index || max_col_offset < correct_offset {
                     let abs = self.get_absolute_offset(i, max_col_offset);
@@ -1323,6 +1324,27 @@ debug = true
         table.insert(49, "i")?;
 
         assert_eq!(table.next_line(49), Some(52));
+
+        Ok(())
+    }
+
+    #[test]
+    fn multiple_inserts_and_next_line() -> Result<(), Error> {
+        let mut table = SimplePieceTable::new(WORKSPACE_TEXT.to_owned());
+
+        assert_eq!(table.char_at(38), Some(' '));
+        assert_eq!(table.column_for_offset(38), Some(HorizontalOffset(1)));
+
+        table.insert(38, "i")?;
+        table.insert(39, "i")?;
+        table.insert(40, "i")?;
+        table.insert(41, "i")?;
+        table.insert(42, "i")?;
+
+        assert_eq!(table.next_line(42), Some(54));
+        assert_eq!(table.char_at(54), Some(']'));
+        assert_eq!(table.next_line(54), Some(56));
+        assert_eq!(table.prev_line(56), Some(54));
 
         Ok(())
     }
