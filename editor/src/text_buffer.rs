@@ -349,7 +349,7 @@ impl TextBuffer for SimplePieceTable {
         assert!(buffer.is_char_boundary(current_piece.piece.start + piece_offset));
 
         if piece_offset == 0 {
-            // The previous character is on the prvious piece.
+            // The previous character is on the previous piece.
             if current_piece.index == 0 {
                 return None;
             }
@@ -654,12 +654,14 @@ impl TextBuffer for SimplePieceTable {
                 start: piece.start,
                 len: piece.len - diff_end,
             };
+            assert!(piece_before.len > 0);
 
             let piece_after = Piece {
                 buffer: piece.buffer,
                 start: piece_before.start + piece_before.len,
                 len: diff_end,
             };
+            assert!(piece_after.len > 0);
 
             remove_indexes.push(index);
             insert_pieces.push((index, piece_after));
@@ -741,17 +743,20 @@ impl TextBuffer for SimplePieceTable {
                     start: first_piece.start,
                     len: removal.start_pos,
                 };
+                assert!(piece_before.len > 0);
                 self.pieces.insert(removal.start_index, piece_before);
                 removal.start_index += 1;
                 removal.end_index += 1;
             }
 
-            if removal.end_pos != last_piece.start + last_piece.len {
+            // Check if we need to insert a piece at the end.
+            if removal.end_pos != last_piece.len {
                 let piece_after = Piece {
                     buffer: last_piece.buffer,
                     start: last_piece.start + removal.end_pos,
                     len: last_piece.len - removal.end_pos,
                 };
+                assert!(piece_after.len > 0);
                 self.pieces.insert(removal.end_index + 1, piece_after);
             }
 
@@ -1345,6 +1350,18 @@ debug = true
         assert_eq!(table.char_at(54), Some(']'));
         assert_eq!(table.next_line(54), Some(56));
         assert_eq!(table.prev_line(56), Some(54));
+
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_text_insertion_and_deletion_idempotent() -> Result<(), Error> {
+        let mut table = SimplePieceTable::new(WORKSPACE_TEXT.to_owned());
+
+        for _ in 0..100 {
+            table.insert(0, "i")?;
+            table.remove(0..1)?;
+        }
 
         Ok(())
     }
