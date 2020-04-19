@@ -41,6 +41,10 @@ impl Buffer {
             .expect("should not fail")
     }
 
+    pub fn find_before(&self, character: char) -> Option<usize> {
+        self.piece_table.find_before(self.cursor.pos, character)
+    }
+
     pub fn move_left(&mut self) -> Option<usize> {
         self.piece_table.prev(self.cursor.pos).map(|offset| {
             println!("===== move_left =====");
@@ -55,6 +59,15 @@ impl Buffer {
             println!("=====================");
             offset
         })
+    }
+
+    pub fn move_to(&mut self, offset: usize) -> Option<()> {
+        self.piece_table
+            .column_for_offset(offset)
+            .map(|HorizontalOffset(col)| {
+                self.cursor.pos = offset;
+                self.cursor.col = col;
+            })
     }
 
     pub fn move_right(&mut self) -> Option<usize> {
@@ -135,10 +148,10 @@ impl Buffer {
             .remove(self.cursor.pos..self.cursor.pos + 1)
             .expect("remove failed");
         self.contents = self.piece_table.contents();
-        println!(
-            "new contents after removing in pos={}: {:?}",
-            self.cursor.pos, self.contents
-        );
+        // println!(
+        //     "new contents after removing in pos={}: {:?}",
+        //     self.cursor.pos, self.contents
+        // );
     }
 
     pub fn column(&self, offset: usize) -> Option<HorizontalOffset> {

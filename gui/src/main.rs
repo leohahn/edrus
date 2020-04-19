@@ -288,6 +288,18 @@ impl EditorView {
         })
     }
 
+    fn move_start_line(&mut self, font_cache: &mut FontCache) -> Option<()> {
+        let new_offset = if let Some(offset) = self.buffer.find_before('\n') {
+            offset + 1
+        } else {
+            0
+        };
+        self.buffer.column(new_offset).map(|col| {
+            self.buffer.move_to(new_offset);
+            self.visual_cursor.move_to_col(col, font_cache);
+        })
+    }
+
     fn move_left(&mut self, font_cache: &mut FontCache) -> Option<()> {
         self.buffer.move_left().map(|_| {
             self.visual_cursor
@@ -362,6 +374,10 @@ impl VisualCursor {
         let glyph = font_cache.get_glyph('a');
         let hmetrics = glyph.h_metrics();
         hmetrics.advance_width * (horizontal_offset.0 - 1) as f32
+    }
+
+    fn move_to_col(&mut self, offset: HorizontalOffset, font_cache: &mut FontCache) {
+        self.position.x = Self::x_from_horizontal_offset(offset, font_cache);
     }
 
     fn move_left(&mut self, font_cache: &mut FontCache, left_char: char) {
@@ -858,39 +874,29 @@ fn main() {
                 if editor_view.visual_cursor.mode() == VisualCursorMode::Normal && should_process_key {
                     match virtual_keycode {
                         VirtualKeyCode::J => {
-                            if key.state == event::ElementState::Pressed {
-                                editor_view.move_down(&mut font_cache).map(|_| {
-                                    window.request_redraw();
-                                });
-                            }
+                            editor_view.move_down(&mut font_cache).map(|_| {
+                                window.request_redraw();
+                            });
                         }
                         VirtualKeyCode::K => {
-                            if key.state == event::ElementState::Pressed {
-                                editor_view.move_up(&mut font_cache).map(|_| {
-                                    window.request_redraw();
-                                });
-                            }
+                            editor_view.move_up(&mut font_cache).map(|_| {
+                                window.request_redraw();
+                            });
                         }
                         VirtualKeyCode::H => {
-                            if key.state == event::ElementState::Pressed {
-                                editor_view.move_left(&mut font_cache).map(|_| {
-                                    window.request_redraw();
-                                });
-                            }
+                            editor_view.move_left(&mut font_cache).map(|_| {
+                                window.request_redraw();
+                            });
                         }
                         VirtualKeyCode::L => {
-                            if key.state == event::ElementState::Pressed {
-                                editor_view.move_right(&mut font_cache).map(|_| {
-                                    window.request_redraw();
-                                });
-                            }
+                            editor_view.move_right(&mut font_cache).map(|_| {
+                                window.request_redraw();
+                            });
                         }
                         VirtualKeyCode::I => {
-                            if key.state == event::ElementState::Pressed {
-                                if editor_view.visual_cursor.mode() != VisualCursorMode::Edit {
-                                    editor_view.visual_cursor.enter_edit_mode();
-                                    window.request_redraw();
-                                }
+                            if editor_view.visual_cursor.mode() != VisualCursorMode::Edit {
+                                editor_view.visual_cursor.enter_edit_mode();
+                                window.request_redraw();
                             }
                         }
                         VirtualKeyCode::E => {
@@ -908,6 +914,11 @@ fn main() {
                         VirtualKeyCode::X => {
                             editor_view.remove_current_char();
                             window.request_redraw();
+                        }
+                        VirtualKeyCode::Key0 => {
+                            editor_view.move_start_line(&mut font_cache).map(|_| {
+                                window.request_redraw();
+                            });
                         }
                         _ => {}
                     }

@@ -16,6 +16,8 @@ pub trait TextBuffer {
 
     fn char_at(&self, offset: usize) -> Option<char>;
     fn column_for_offset(&self, offset: usize) -> Option<HorizontalOffset>;
+
+    fn find_before(&self, offset: usize, character: char) -> Option<usize>;
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -241,6 +243,51 @@ fn len_utf8_from_first_byte(b: u8) -> usize {
 }
 
 impl TextBuffer for SimplePieceTable {
+    fn find_before(&self, offset: usize, character: char) -> Option<usize> {
+        let current_piece = self.get_current_piece(offset)?;
+        let piece_offset = offset - current_piece.len_until;
+
+        for (index, piece) in self
+            .pieces
+            .iter()
+            .enumerate()
+            .rev()
+            .skip(self.pieces.len() - (current_piece.index + 1))
+        {
+            let curr_buffer = self.get_buffer(piece);
+            let start = piece.start;
+            let end = if index == current_piece.index {
+                piece_offset
+            } else {
+                piece.len
+            };
+
+            let str_slice = &curr_buffer[start..start + end];
+            let maybe_newline_offset = str_slice.rfind('\n');
+            let maybe_char_offset = str_slice.rfind(character);
+
+            match (maybe_char_offset, maybe_newline_offset) {
+                (None, None) => continue,
+                (None, Some(_)) => {
+                    return None;
+                }
+                (Some(_), None) => {
+                    return maybe_char_offset.map(|char_offset| self.get_absolute_offset(index, char_offset));
+                }
+                (Some(char_offset), Some(newline_offset)) => {
+                    if char_offset >= newline_offset {
+                        return maybe_char_offset
+                            .map(|char_offset| self.get_absolute_offset(index, char_offset));
+                    } else {
+                        return None;
+                    }
+                }
+            };
+        }
+
+        None
+    }
+
     #[flamer::flame]
     fn column_for_offset(&self, offset: usize) -> Option<HorizontalOffset> {
         let current_piece = self.get_current_piece(offset)?;
@@ -1423,6 +1470,29 @@ debug = true
         {
             assert_eq!(table.char_at(25), Some(' '));
             assert_eq!(table.prev_line(25), Some(12));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_text_find_before() -> Result<(), Error> {
+        let table = SimplePieceTable::new(WORKSPACE_TEXT.to_owned());
+
+        {
+            assert_eq!(table.char_at(6), Some('p'));
+            assert_eq!(table.find_before(6, '\n'), None);
+            assert_eq!(table.find_before(6, '['), Some(0));
+        }
+
+        {
+            assert_eq!(table.char_at(18), Some('s'));
+            assert_eq!(table.find_before(18, '\n'), Some(11));
+        }
+
+        {
+            assert_eq!(table.char_at(13), Some('e'));
+            assert_eq!(table.find_before(18, ']'), None);
         }
 
         Ok(())
