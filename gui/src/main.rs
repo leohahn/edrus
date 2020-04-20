@@ -796,7 +796,7 @@ fn main() {
                     }
                     window.request_redraw();
                 }
-                _ => panic!("this scroll format is not yet supported"),
+                _ => println!("this scroll format is not yet supported"),
             },
             event::Event::WindowEvent {
                 event: event::WindowEvent::ModifiersChanged(modifiers_state),
