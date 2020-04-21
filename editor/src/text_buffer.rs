@@ -56,8 +56,7 @@ struct CharMovement(());
 impl Movement for CharMovement {
     fn next(piece_slice: &PieceSlice, offset: PieceOffset) -> Option<(char, PieceOffset)> {
         piece_slice.byte_at(offset).and_then(|byte| {
-            let char_len = len_utf8_from_first_byte(byte);
-            let next_offset = offset + char_len;
+            let next_offset = offset + len_utf8_from_first_byte(byte);
             piece_slice.char_at(next_offset).map(|c| (c, next_offset))
         })
     }
@@ -468,79 +467,70 @@ impl TextBuffer for SimplePieceTable {
     #[flamer::flame]
     fn next(&self, offset: usize) -> Option<usize> {
         let current_piece = self.get_current_piece(offset)?;
-        let piece_offset = offset - current_piece.len_until;
-        let buffer = self.get_buffer(&current_piece.piece);
+        let piece_offset = PieceOffset(offset - current_piece.len_until);
 
-        if buffer.as_bytes()[current_piece.piece.start + piece_offset] == '\n' as u8 {
-            return None;
-        }
-
-        assert!(buffer.is_char_boundary(current_piece.piece.start + piece_offset));
-
-        let current_char_len =
-            len_utf8_from_first_byte(buffer.as_bytes()[current_piece.piece.start + piece_offset]);
-
-        let next_piece_offset = piece_offset + current_char_len;
-
-        if next_piece_offset >= current_piece.piece.len {
-            // Next piece offset is either on the next piece or outside of the file.
-            return self.pieces.get(current_piece.index + 1).and_then(|next_piece| {
-                let buffer = self.get_buffer(next_piece);
-                if buffer.as_bytes()[next_piece.start] == '\n' as u8 {
-                    None
-                } else {
-                    Some(current_piece.len_until + next_piece_offset)
+        for (i, piece) in self.pieces.iter().enumerate().skip(current_piece.index) {
+            let piece_slice = piece.get_slice(self.get_buffer(&piece));
+            if i == current_piece.index {
+                match CharMovement::next(&piece_slice, piece_offset) {
+                    None => (),
+                    Some((_ch, offset)) => {
+                        let abs = self.get_absolute_offset(i, offset.0);
+                        return Some(abs);
+                    }
                 }
-            });
+            } else {
+                let abs = self.get_absolute_offset(i, 0);
+                return Some(abs);
+            }
         }
 
-        if buffer.as_bytes()[current_piece.piece.start + next_piece_offset] == '\n' as u8 {
-            return None;
-        }
-
-        assert!(next_piece_offset <= current_piece.piece.len);
-        Some(current_piece.len_until + next_piece_offset)
+        None
     }
 
     #[flamer::flame]
     fn prev(&self, offset: usize) -> Option<usize> {
         let current_piece = self.get_current_piece(offset)?;
-        let piece_offset = offset - current_piece.len_until;
-        let buffer = self.get_buffer(&current_piece.piece);
+        let current_piece_slice = current_piece
+            .piece
+            .get_slice(self.get_buffer(&current_piece.piece));
 
-        if buffer.as_bytes()[current_piece.piece.start + piece_offset] == '\n' as u8 {
+        let piece_offset = PieceOffset(offset - current_piece.len_until);
+        let current_char = current_piece_slice.char_at(piece_offset)?;
+
+        if current_char == '\n' {
             return None;
         }
 
-        assert!(buffer.is_char_boundary(current_piece.piece.start + piece_offset));
+        assert!(current_piece_slice.is_char_boundary(piece_offset));
 
-        if piece_offset == 0 {
-            // The previous character is on the previous piece.
-            if current_piece.index == 0 {
-                return None;
-            }
-
-            return self.pieces.get(current_piece.index - 1).and_then(|prev_piece| {
-                let buffer = self.get_buffer(prev_piece);
-                let prev_offset =
-                    SimplePieceTable::find_prev_offset(prev_piece.len, &buffer[prev_piece.start..]);
-
-                if buffer.as_bytes()[prev_piece.start + prev_offset] == '\n' as u8 {
-                    None
-                } else {
-                    Some(current_piece.len_until - (prev_piece.len - prev_offset))
+        for (i, piece) in self
+            .pieces
+            .iter()
+            .enumerate()
+            .rev()
+            .skip(self.pieces.len() - (current_piece.index + 1))
+        {
+            let start_offset = if i == current_piece.index {
+                piece_offset
+            } else {
+                PieceOffset(piece.len)
+            };
+            let piece_slice = piece.get_slice(self.get_buffer(piece));
+            match CharMovement::prev(&piece_slice, start_offset) {
+                // TODO: remove this hardcoded behaviour.
+                Some(('\n', _)) => {
+                    return None;
                 }
-            });
+                Some((_, offset)) => {
+                    let abs = self.get_absolute_offset(i, offset.0);
+                    return Some(abs);
+                }
+                None => (),
+            };
         }
 
-        let prev_piece_offset =
-            SimplePieceTable::find_prev_offset(piece_offset, &buffer[current_piece.piece.start..]);
-
-        if buffer.as_bytes()[current_piece.piece.start + prev_piece_offset] == '\n' as u8 {
-            None
-        } else {
-            Some(current_piece.len_until + prev_piece_offset)
-        }
+        None
     }
 
     #[flamer::flame]
@@ -1090,7 +1080,7 @@ mod test {
 
         {
             assert_eq!(table.char_at(28).unwrap(), 'g');
-            assert_eq!(table.next(28), None);
+            assert_eq!(table.next(28), Some(29));
         }
     }
 
@@ -1435,7 +1425,7 @@ version = "0.9.3"
         {
             assert_eq!(table.char_at(56), Some('\n'));
             assert_eq!(table.column_for_offset(56), Some(HorizontalOffset(1)));
-            assert_eq!(table.next(56), None);
+            assert_eq!(table.next(56), Some(57));
             assert_eq!(table.prev(56), None);
             assert_eq!(table.next_line(56), Some(57));
             assert_eq!(table.char_at(57), Some('['));

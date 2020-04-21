@@ -71,19 +71,27 @@ impl Buffer {
     }
 
     pub fn move_right(&mut self) -> Option<usize> {
-        self.piece_table.next(self.cursor.pos).map(|offset| {
-            println!("===== move_right =====");
-            println!("prev char: {}", self.current_char());
-            self.cursor.pos = offset;
-            self.cursor.col = self
-                .piece_table
-                .column_for_offset(self.cursor.pos)
-                .expect("should not fail")
-                .0;
-            println!("next char: {}, offset={}", self.current_char(), self.cursor.pos);
-            println!("=====================");
-            offset
-        })
+        if self.current_char() == '\n' {
+            None
+        } else {
+            self.piece_table.next(self.cursor.pos).and_then(|offset| {
+                if self.piece_table.char_at(offset).unwrap() == '\n' {
+                    None
+                } else {
+                    println!("===== move_right =====");
+                    println!("prev char: {}", self.current_char());
+                    self.cursor.pos = offset;
+                    self.cursor.col = self
+                        .piece_table
+                        .column_for_offset(self.cursor.pos)
+                        .expect("should not fail")
+                        .0;
+                    println!("next char: {}, offset={}", self.current_char(), self.cursor.pos);
+                    println!("=====================");
+                    Some(offset)
+                }
+            })
+        }
     }
 
     pub fn move_down(&mut self) -> Option<usize> {
