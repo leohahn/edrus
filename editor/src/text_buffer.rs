@@ -20,10 +20,122 @@ pub trait TextBuffer {
     fn find_before(&self, offset: usize, character: char) -> Option<usize>;
 }
 
+trait Movement {
+    fn next(piece_slice: &PieceSlice, offset: PieceOffset) -> Option<(char, PieceOffset)>;
+    fn prev(piece_slice: &PieceSlice, offset: PieceOffset) -> Option<(char, PieceOffset)>;
+}
+
+#[derive(Debug)]
+struct LineMovement(());
+
+impl Movement for LineMovement {
+    fn next(piece_slice: &PieceSlice, offset: PieceOffset) -> Option<(char, PieceOffset)> {
+        if offset.0 == piece_slice.len() - 1 {
+            None
+        } else {
+            piece_slice
+                .memchr_from(offset + 1, '\n' as u8)
+                .map(|newline| ('\n', newline))
+        }
+    }
+
+    fn prev(piece_slice: &PieceSlice, offset: PieceOffset) -> Option<(char, PieceOffset)> {
+        if offset.0 == 0 {
+            None
+        } else {
+            piece_slice
+                .memrchr_from(offset - 1, '\n' as u8)
+                .map(|newline| ('\n', newline))
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CharMovement(());
+
+impl Movement for CharMovement {
+    fn next(piece_slice: &PieceSlice, offset: PieceOffset) -> Option<(char, PieceOffset)> {
+        piece_slice.byte_at(offset).and_then(|byte| {
+            let char_len = len_utf8_from_first_byte(byte);
+            let next_offset = offset + char_len;
+            piece_slice.char_at(next_offset).map(|c| (c, next_offset))
+        })
+    }
+
+    fn prev(piece_slice: &PieceSlice, offset: PieceOffset) -> Option<(char, PieceOffset)> {
+        if offset.0 == 0 {
+            None
+        } else {
+            let mut prev_offset = offset - 1;
+            while !piece_slice.is_char_boundary(prev_offset) {
+                assert!(prev_offset.0 > 0);
+                prev_offset -= 1;
+            }
+            let c = piece_slice
+                .char_at(prev_offset)
+                .expect("prev_offset is not valid");
+            Some((c, prev_offset))
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 enum Buffer {
     Original,
     Added,
+}
+
+struct PieceSlice<'a>(&'a str);
+
+impl<'a> PieceSlice<'a> {
+    fn memchr_from(&self, offset: PieceOffset, byte: u8) -> Option<PieceOffset> {
+        let bytes = &self.0.as_bytes()[offset.0..];
+        memchr(byte, bytes).map(|newline| PieceOffset(newline + offset.0))
+    }
+
+    fn memrchr_from(&self, offset: PieceOffset, byte: u8) -> Option<PieceOffset> {
+        let bytes = &self.0.as_bytes()[0..=offset.0];
+        memrchr(byte, bytes).map(|newline| PieceOffset(newline))
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn is_char_boundary(&self, offset: PieceOffset) -> bool {
+        self.0.is_char_boundary(offset.0)
+    }
+
+    fn char_at(&self, offset: PieceOffset) -> Option<char> {
+        self.0.get(offset.0..).and_then(|slice| slice.chars().next())
+    }
+
+    fn byte_at(&self, offset: PieceOffset) -> Option<u8> {
+        self.0.as_bytes().get(offset.0).map(|b| b.clone())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PieceOffset(usize);
+
+impl std::ops::Add<usize> for PieceOffset {
+    type Output = Self;
+    fn add(self, other: usize) -> Self {
+        Self(self.0 + other)
+    }
+}
+
+impl std::ops::Sub<usize> for PieceOffset {
+    type Output = Self;
+    fn sub(self, other: usize) -> Self {
+        Self(self.0 - other)
+    }
+}
+
+impl std::ops::SubAssign<usize> for PieceOffset {
+    fn sub_assign(&mut self, offset: usize) {
+        self.0 -= offset;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -31,6 +143,13 @@ struct Piece {
     buffer: Buffer,
     start: usize,
     len: usize,
+}
+
+impl Piece {
+    fn get_slice<'a>(&'a self, buf: &'a str) -> PieceSlice {
+        let piece_buf = &buf[self.start..self.start + self.len];
+        PieceSlice(piece_buf)
+    }
 }
 
 // NOTE: This data structure is inefficient, eventually this should be replaced
@@ -1496,5 +1615,140 @@ debug = true
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn char_movement() {
+        let table = SimplePieceTable::new(WORKSPACE_TEXT.to_owned());
+        let first_piece = &table.pieces[0];
+        let piece_slice = first_piece.get_slice(table.get_buffer(first_piece));
+
+        struct TestCase {
+            input_offset: PieceOffset,
+            expected: Option<(char, PieceOffset)>,
+            next: bool,
+        }
+
+        let table = vec![
+            TestCase {
+                input_offset: PieceOffset(10),
+                expected: Some(('\n', PieceOffset(11))),
+                next: true,
+            },
+            TestCase {
+                input_offset: PieceOffset(11),
+                expected: Some(('m', PieceOffset(12))),
+                next: true,
+            },
+            TestCase {
+                input_offset: PieceOffset(11),
+                expected: Some(('m', PieceOffset(12))),
+                next: true,
+            },
+            TestCase {
+                input_offset: PieceOffset(20),
+                expected: Some((' ', PieceOffset(21))),
+                next: true,
+            },
+            TestCase {
+                input_offset: PieceOffset(WORKSPACE_TEXT.len() - 1),
+                expected: None,
+                next: true,
+            },
+            TestCase {
+                input_offset: PieceOffset(WORKSPACE_TEXT.len() - 2),
+                expected: Some(('\n', PieceOffset(WORKSPACE_TEXT.len() - 1))),
+                next: true,
+            },
+            TestCase {
+                input_offset: PieceOffset(20),
+                expected: Some((' ', PieceOffset(19))),
+                next: false,
+            },
+            TestCase {
+                input_offset: PieceOffset(1),
+                expected: Some(('[', PieceOffset(0))),
+                next: false,
+            },
+            TestCase {
+                input_offset: PieceOffset(0),
+                expected: None,
+                next: false,
+            },
+        ];
+
+        for test_case in table {
+            let res = if test_case.next {
+                CharMovement::next(&piece_slice, test_case.input_offset)
+            } else {
+                CharMovement::prev(&piece_slice, test_case.input_offset)
+            };
+            assert_eq!(res, test_case.expected);
+        }
+    }
+
+    //     const WORKSPACE_TEXT: &str = r#"[workspace]
+    // members = [
+    //     "editor",
+    //     "gui",
+    // ]
+
+    // [profile.release]
+    // debug = true
+    // "#;
+
+    #[test]
+    fn line_movement() {
+        let table = SimplePieceTable::new(WORKSPACE_TEXT.to_owned());
+        let first_piece = &table.pieces[0];
+        let piece_slice = first_piece.get_slice(table.get_buffer(first_piece));
+
+        struct TestCase {
+            input_offset: PieceOffset,
+            expected: Option<(char, PieceOffset)>,
+            next: bool,
+        }
+
+        let table = vec![
+            TestCase {
+                input_offset: PieceOffset(0),
+                expected: Some(('\n', PieceOffset(11))),
+                next: true,
+            },
+            TestCase {
+                input_offset: PieceOffset(11),
+                expected: Some(('\n', PieceOffset(23))),
+                next: true,
+            },
+            TestCase {
+                input_offset: PieceOffset(WORKSPACE_TEXT.len() - 1),
+                expected: None,
+                next: true,
+            },
+            TestCase {
+                input_offset: PieceOffset(5),
+                expected: None,
+                next: false,
+            },
+            TestCase {
+                input_offset: PieceOffset(11),
+                expected: None,
+                next: false,
+            },
+            TestCase {
+                input_offset: PieceOffset(12),
+                expected: Some(('\n', PieceOffset(11))),
+                next: false,
+            },
+        ];
+
+        for test_case in table {
+            let res = if test_case.next {
+                LineMovement::next(&piece_slice, test_case.input_offset)
+            } else {
+                LineMovement::prev(&piece_slice, test_case.input_offset)
+            };
+            assert_eq!(res, test_case.expected);
+        }
     }
 }
