@@ -45,22 +45,6 @@ impl Buffer {
         self.piece_table.find_before(self.cursor.pos, character)
     }
 
-    pub fn move_left(&mut self) -> Option<usize> {
-        self.piece_table.prev(self.cursor.pos).map(|offset| {
-            println!("===== move_left =====");
-            println!("prev char: {}", self.current_char());
-            self.cursor.pos = offset;
-            self.cursor.col = self
-                .piece_table
-                .column_for_offset(self.cursor.pos)
-                .expect("should not fail")
-                .0;
-            println!("next char: {}, offset={}", self.current_char(), self.cursor.pos);
-            println!("=====================");
-            offset
-        })
-    }
-
     pub fn move_to(&mut self, offset: usize) -> Option<()> {
         self.piece_table
             .column_for_offset(offset)
@@ -68,6 +52,30 @@ impl Buffer {
                 self.cursor.pos = offset;
                 self.cursor.col = col;
             })
+    }
+
+    pub fn move_left(&mut self) -> Option<usize> {
+        if self.current_char() == '\n' {
+            None
+        } else {
+            self.piece_table.prev(self.cursor.pos).and_then(|offset| {
+                if self.piece_table.char_at(offset).unwrap() == '\n' {
+                    None
+                } else {
+                    println!("===== move_left =====");
+                    println!("prev char: {}", self.current_char());
+                    self.cursor.pos = offset;
+                    self.cursor.col = self
+                        .piece_table
+                        .column_for_offset(self.cursor.pos)
+                        .expect("should not fail")
+                        .0;
+                    println!("next char: {}, offset={}", self.current_char(), self.cursor.pos);
+                    println!("=====================");
+                    Some(offset)
+                }
+            })
+        }
     }
 
     pub fn move_right(&mut self) -> Option<usize> {

@@ -491,18 +491,7 @@ impl TextBuffer for SimplePieceTable {
     #[flamer::flame]
     fn prev(&self, offset: usize) -> Option<usize> {
         let current_piece = self.get_current_piece(offset)?;
-        let current_piece_slice = current_piece
-            .piece
-            .get_slice(self.get_buffer(&current_piece.piece));
-
         let piece_offset = PieceOffset(offset - current_piece.len_until);
-        let current_char = current_piece_slice.char_at(piece_offset)?;
-
-        if current_char == '\n' {
-            return None;
-        }
-
-        assert!(current_piece_slice.is_char_boundary(piece_offset));
 
         for (i, piece) in self
             .pieces
@@ -518,10 +507,6 @@ impl TextBuffer for SimplePieceTable {
             };
             let piece_slice = piece.get_slice(self.get_buffer(piece));
             match CharMovement::prev(&piece_slice, start_offset) {
-                // TODO: remove this hardcoded behaviour.
-                Some(('\n', _)) => {
-                    return None;
-                }
                 Some((_, offset)) => {
                     let abs = self.get_absolute_offset(i, offset.0);
                     return Some(abs);
@@ -1171,7 +1156,7 @@ mod test {
 
         {
             assert_eq!(table.char_at(30).unwrap(), ':');
-            assert_eq!(table.prev(30), None);
+            assert_eq!(table.prev(30), Some(29));
         }
     }
 
@@ -1426,7 +1411,7 @@ version = "0.9.3"
             assert_eq!(table.char_at(56), Some('\n'));
             assert_eq!(table.column_for_offset(56), Some(HorizontalOffset(1)));
             assert_eq!(table.next(56), Some(57));
-            assert_eq!(table.prev(56), None);
+            assert_eq!(table.prev(56), Some(55));
             assert_eq!(table.next_line(56), Some(57));
             assert_eq!(table.char_at(57), Some('['));
         }
