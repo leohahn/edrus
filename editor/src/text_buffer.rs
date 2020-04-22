@@ -1,34 +1,41 @@
 use crate::error::Error;
 use memchr::{memchr, memrchr};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, PartialOrd, Copy, Clone)]
 pub struct HorizontalOffset(pub usize);
+
+#[derive(Debug, PartialEq, PartialOrd, Copy, Clone)]
+pub struct Line(pub usize);
 
 pub trait TextBuffer {
     fn insert(&mut self, pos: usize, text: &str) -> Result<(), Error>;
     fn remove(&mut self, range: std::ops::Range<usize>) -> Result<(), Error>;
     fn contents(&self) -> String;
 
-    fn next(&self, offset: usize) -> Option<usize>;
+    fn next<M: Metric>(&self, offset: usize) -> Option<usize>;
     fn prev(&self, offset: usize) -> Option<usize>;
     fn prev_line(&self, offset: usize) -> Option<usize>;
     fn next_line(&self, offset: usize) -> Option<usize>;
 
     fn char_at(&self, offset: usize) -> Option<char>;
     fn column_for_offset(&self, offset: usize) -> Option<HorizontalOffset>;
+    fn line_for_offset(&self, offset: usize) -> Option<Line>;
 
     fn find_before(&self, offset: usize, character: char) -> Option<usize>;
 }
 
-trait Movement {
+// This is based on the Metric trait from xi-editor.
+// TODO: find a better name.
+pub trait Metric {
     fn next(piece_slice: &PieceSlice, offset: PieceOffset) -> Option<(char, PieceOffset)>;
     fn prev(piece_slice: &PieceSlice, offset: PieceOffset) -> Option<(char, PieceOffset)>;
+    fn at_boundary(piece_slice: &PieceSlice, offset: PieceOffset) -> bool;
 }
 
 #[derive(Debug)]
-struct LineMovement(());
+pub struct LineMetric(());
 
-impl Movement for LineMovement {
+impl Metric for LineMetric {
     fn next(piece_slice: &PieceSlice, offset: PieceOffset) -> Option<(char, PieceOffset)> {
         if offset.0 == piece_slice.len() - 1 {
             None
@@ -48,12 +55,16 @@ impl Movement for LineMovement {
                 .map(|newline| ('\n', newline))
         }
     }
+
+    fn at_boundary(piece_slice: &PieceSlice, offset: PieceOffset) -> bool {
+        piece_slice.char_at(offset).map(|c| c == '\n').unwrap_or(false)
+    }
 }
 
 #[derive(Debug)]
-struct CharMovement(());
+pub struct CharMetric(());
 
-impl Movement for CharMovement {
+impl Metric for CharMetric {
     fn next(piece_slice: &PieceSlice, offset: PieceOffset) -> Option<(char, PieceOffset)> {
         piece_slice.byte_at(offset).and_then(|byte| {
             let next_offset = offset + len_utf8_from_first_byte(byte);
@@ -76,6 +87,10 @@ impl Movement for CharMovement {
             Some((c, prev_offset))
         }
     }
+
+    fn at_boundary(piece_slice: &PieceSlice, offset: PieceOffset) -> bool {
+        piece_slice.is_char_boundary(offset)
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -84,7 +99,7 @@ enum Buffer {
     Added,
 }
 
-struct PieceSlice<'a>(&'a str);
+pub struct PieceSlice<'a>(&'a str);
 
 impl<'a> PieceSlice<'a> {
     fn memchr_from(&self, offset: PieceOffset, byte: u8) -> Option<PieceOffset> {
@@ -114,8 +129,8 @@ impl<'a> PieceSlice<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct PieceOffset(usize);
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct PieceOffset(usize);
 
 impl std::ops::Add<usize> for PieceOffset {
     type Output = Self;
@@ -406,6 +421,36 @@ impl TextBuffer for SimplePieceTable {
         None
     }
 
+    fn line_for_offset(&self, offset: usize) -> Option<Line> {
+        let current_piece = self.get_current_piece(offset)?;
+        let current_piece_offset = PieceOffset(offset - current_piece.len_until);
+        // TODO: consider make lines start at 0.
+        let mut line = 1;
+
+        for (i, piece) in self.pieces.iter().enumerate().take(current_piece.index + 1) {
+            let last_index = i == current_piece.index;
+            let piece_slice = piece.get_slice(self.get_buffer(piece));
+            let mut piece_offset = PieceOffset(0);
+
+            if LineMetric::at_boundary(&piece_slice, piece_offset) {
+                line += 1;
+            }
+
+            while let Some((_, offset)) = LineMetric::next(&piece_slice, piece_offset) {
+                piece_offset = offset;
+                if last_index {
+                    if offset < current_piece_offset {
+                        line += 1;
+                    }
+                } else {
+                    line += 1;
+                }
+            }
+        }
+
+        Some(Line(line))
+    }
+
     #[flamer::flame]
     fn column_for_offset(&self, offset: usize) -> Option<HorizontalOffset> {
         let current_piece = self.get_current_piece(offset)?;
@@ -465,14 +510,14 @@ impl TextBuffer for SimplePieceTable {
     }
 
     #[flamer::flame]
-    fn next(&self, offset: usize) -> Option<usize> {
+    fn next<M: Metric>(&self, offset: usize) -> Option<usize> {
         let current_piece = self.get_current_piece(offset)?;
         let piece_offset = PieceOffset(offset - current_piece.len_until);
 
         for (i, piece) in self.pieces.iter().enumerate().skip(current_piece.index) {
             let piece_slice = piece.get_slice(self.get_buffer(&piece));
             if i == current_piece.index {
-                match CharMovement::next(&piece_slice, piece_offset) {
+                match M::next(&piece_slice, piece_offset) {
                     None => (),
                     Some((_ch, offset)) => {
                         let abs = self.get_absolute_offset(i, offset.0);
@@ -480,8 +525,19 @@ impl TextBuffer for SimplePieceTable {
                     }
                 }
             } else {
-                let abs = self.get_absolute_offset(i, 0);
-                return Some(abs);
+                let at_boundary = M::at_boundary(&piece_slice, PieceOffset(0));
+                if at_boundary {
+                    let abs = self.get_absolute_offset(i, 0);
+                    return Some(abs);
+                }
+
+                match M::next(&piece_slice, PieceOffset(0)) {
+                    None => (),
+                    Some((_ch, offset)) => {
+                        let abs = self.get_absolute_offset(i, offset.0);
+                        return Some(abs);
+                    }
+                }
             }
         }
 
@@ -506,7 +562,7 @@ impl TextBuffer for SimplePieceTable {
                 PieceOffset(piece.len)
             };
             let piece_slice = piece.get_slice(self.get_buffer(piece));
-            match CharMovement::prev(&piece_slice, start_offset) {
+            match CharMetric::prev(&piece_slice, start_offset) {
                 Some((_, offset)) => {
                     let abs = self.get_absolute_offset(i, offset.0);
                     return Some(abs);
@@ -988,31 +1044,31 @@ mod test {
         assert_eq!(table.contents(), "Carl, the dog");
 
         {
-            let idx = table.next(3).expect("should not fail");
+            let idx = table.next::<CharMetric>(3).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), (',', 4));
 
-            let idx = table.next(4).expect("should not fail");
+            let idx = table.next::<CharMetric>(4).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), (' ', 5));
 
-            let idx = table.next(5).expect("should not fail");
+            let idx = table.next::<CharMetric>(5).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('t', 6));
 
-            let idx = table.next(6).expect("should not fail");
+            let idx = table.next::<CharMetric>(6).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('h', 7));
 
-            let idx = table.next(7).expect("should not fail");
+            let idx = table.next::<CharMetric>(7).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('e', 8));
 
-            let idx = table.next(8).expect("should not fail");
+            let idx = table.next::<CharMetric>(8).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), (' ', 9));
 
-            let idx = table.next(9).expect("should not fail");
+            let idx = table.next::<CharMetric>(9).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('d', 10));
 
-            let idx = table.next(10).expect("should not fail");
+            let idx = table.next::<CharMetric>(10).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('o', 11));
 
-            let idx = table.next(11).expect("should not fail");
+            let idx = table.next::<CharMetric>(11).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('g', 12));
         }
 
@@ -1020,43 +1076,43 @@ mod test {
         assert_eq!(table.contents(), "Carl, cartão ótimo, the dog");
 
         {
-            let idx = table.next(4).expect("should not fail");
+            let idx = table.next::<CharMetric>(4).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), (' ', 5));
 
-            let idx = table.next(5).expect("should not fail");
+            let idx = table.next::<CharMetric>(5).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('c', 6));
 
-            let idx = table.next(6).expect("should not fail");
+            let idx = table.next::<CharMetric>(6).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('a', 7));
 
-            let idx = table.next(7).expect("should not fail");
+            let idx = table.next::<CharMetric>(7).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('r', 8));
 
-            let idx = table.next(8).expect("should not fail");
+            let idx = table.next::<CharMetric>(8).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('t', 9));
 
-            let idx = table.next(9).expect("should not fail");
+            let idx = table.next::<CharMetric>(9).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('ã', 10));
 
-            let idx = table.next(10).expect("should not fail");
+            let idx = table.next::<CharMetric>(10).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('o', 12));
 
-            let idx = table.next(12).expect("should not fail");
+            let idx = table.next::<CharMetric>(12).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), (' ', 13));
 
-            let idx = table.next(13).expect("should not fail");
+            let idx = table.next::<CharMetric>(13).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('ó', 14));
 
-            let idx = table.next(14).expect("should not fail");
+            let idx = table.next::<CharMetric>(14).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('t', 16));
 
-            let idx = table.next(16).expect("should not fail");
+            let idx = table.next::<CharMetric>(16).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('i', 17));
 
-            let idx = table.next(17).expect("should not fail");
+            let idx = table.next::<CharMetric>(17).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('m', 18));
 
-            let idx = table.next(18).expect("should not fail");
+            let idx = table.next::<CharMetric>(18).expect("should not fail");
             assert_eq!((table.char_at(idx).unwrap(), idx), ('o', 19));
         }
 
@@ -1065,7 +1121,7 @@ mod test {
 
         {
             assert_eq!(table.char_at(28).unwrap(), 'g');
-            assert_eq!(table.next(28), Some(29));
+            assert_eq!(table.next::<CharMetric>(28), Some(29));
         }
     }
 
@@ -1410,7 +1466,7 @@ version = "0.9.3"
         {
             assert_eq!(table.char_at(56), Some('\n'));
             assert_eq!(table.column_for_offset(56), Some(HorizontalOffset(1)));
-            assert_eq!(table.next(56), Some(57));
+            assert_eq!(table.next::<CharMetric>(56), Some(57));
             assert_eq!(table.prev(56), Some(55));
             assert_eq!(table.next_line(56), Some(57));
             assert_eq!(table.char_at(57), Some('['));
@@ -1592,6 +1648,38 @@ debug = true
         Ok(())
     }
 
+    //     const WORKSPACE_TEXT: &str = r#"[workspace]
+    // members = [
+    //     "editor",
+    //     "gui",
+    // ]
+
+    // [profile.release]
+    // debug = true
+    // "#;
+    #[test]
+
+    fn line_for_offset() {
+        let table = SimplePieceTable::new(WORKSPACE_TEXT.to_owned());
+        assert_eq!(table.line_for_offset(0), Some(Line(1)));
+        assert_eq!(table.line_for_offset(5), Some(Line(1)));
+        assert_eq!(table.line_for_offset(11), Some(Line(1)));
+        assert_eq!(table.line_for_offset(12), Some(Line(2)));
+        assert_eq!(table.line_for_offset(15), Some(Line(2)));
+        assert_eq!(table.line_for_offset(23), Some(Line(2)));
+        assert_eq!(table.line_for_offset(24), Some(Line(3)));
+        assert_eq!(table.line_for_offset(36), Some(Line(3)));
+        assert_eq!(table.line_for_offset(37), Some(Line(3)));
+        assert_eq!(table.line_for_offset(49), Some(Line(5)));
+        assert_eq!(table.line_for_offset(50), Some(Line(5)));
+        assert_eq!(table.line_for_offset(51), Some(Line(6)));
+        assert_eq!(table.line_for_offset(52), Some(Line(7)));
+        assert_eq!(table.line_for_offset(69), Some(Line(7)));
+        assert_eq!(table.line_for_offset(70), Some(Line(8)));
+        assert_eq!(table.line_for_offset(82), Some(Line(8)));
+        assert_eq!(table.line_for_offset(83), None);
+    }
+
     #[test]
     fn char_movement() {
         let table = SimplePieceTable::new(WORKSPACE_TEXT.to_owned());
@@ -1654,23 +1742,13 @@ debug = true
 
         for test_case in table {
             let res = if test_case.next {
-                CharMovement::next(&piece_slice, test_case.input_offset)
+                CharMetric::next(&piece_slice, test_case.input_offset)
             } else {
-                CharMovement::prev(&piece_slice, test_case.input_offset)
+                CharMetric::prev(&piece_slice, test_case.input_offset)
             };
             assert_eq!(res, test_case.expected);
         }
     }
-
-    //     const WORKSPACE_TEXT: &str = r#"[workspace]
-    // members = [
-    //     "editor",
-    //     "gui",
-    // ]
-
-    // [profile.release]
-    // debug = true
-    // "#;
 
     #[test]
     fn line_movement() {
@@ -1719,9 +1797,9 @@ debug = true
 
         for test_case in table {
             let res = if test_case.next {
-                LineMovement::next(&piece_slice, test_case.input_offset)
+                LineMetric::next(&piece_slice, test_case.input_offset)
             } else {
-                LineMovement::prev(&piece_slice, test_case.input_offset)
+                LineMetric::prev(&piece_slice, test_case.input_offset)
             };
             assert_eq!(res, test_case.expected);
         }

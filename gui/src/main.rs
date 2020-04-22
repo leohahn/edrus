@@ -261,9 +261,8 @@ impl EditorView {
     }
 
     fn move_up(&mut self, font_cache: &mut FontCache) -> Option<()> {
-        self.buffer.move_up().map(|new_offset| {
-            let hoffset = self.buffer.column(new_offset).expect("should not fail");
-            self.visual_cursor.move_up(font_cache, hoffset);
+        self.buffer.move_up().map(|_| {
+            self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
 
             let closeness_top = self.visual_cursor.position.y - self.top_y;
             if closeness_top < 0.0 {
@@ -273,9 +272,8 @@ impl EditorView {
     }
 
     fn move_down(&mut self, font_cache: &mut FontCache) -> Option<()> {
-        self.buffer.move_down().map(|new_offset| {
-            let hoffset = self.buffer.column(new_offset).expect("should not fail");
-            self.visual_cursor.move_down(font_cache, hoffset);
+        self.buffer.move_down().map(|_| {
+            self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
 
             let vmetrics = font_cache.v_metrics();
             let vertical_offset = vmetrics.ascent - vmetrics.descent;
@@ -288,34 +286,52 @@ impl EditorView {
         })
     }
 
-    fn move_start_line(&mut self, font_cache: &mut FontCache) -> Option<()> {
+    fn move_start_line(&mut self, font_cache: &mut FontCache) {
         let new_offset = if let Some(offset) = self.buffer.find_before('\n') {
             offset + 1
         } else {
             0
         };
-        self.buffer.column(new_offset).map(|col| {
-            self.buffer.move_to(new_offset);
-            self.visual_cursor.move_to_col(col, font_cache);
-        })
+        self.buffer.move_to(new_offset);
+        self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
     }
 
     fn move_left(&mut self, font_cache: &mut FontCache) -> Option<()> {
         self.buffer.move_left().map(|_| {
-            self.visual_cursor
-                .move_left(font_cache, self.buffer.current_char());
+            self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
+        })
+    }
+
+    fn move_left_unbounded(&mut self, font_cache: &mut FontCache) -> Option<()> {
+        self.buffer.move_left_unbounded().map(|_| {
+            self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
         })
     }
 
     fn move_right(&mut self, font_cache: &mut FontCache) -> Option<()> {
         self.buffer.move_right().map(|_| {
-            self.visual_cursor
-                .move_right(font_cache, self.buffer.current_char());
+            self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
+        })
+    }
+
+    fn move_right_unbounded(&mut self, font_cache: &mut FontCache) -> Option<()> {
+        self.buffer.move_right_unbounded().map(|_| {
+            self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
         })
     }
 
     fn contents(&self) -> &str {
         self.buffer.contents()
+    }
+
+    fn enter_append_mode(&mut self, font_cache: &mut FontCache) {
+        assert!(self.visual_cursor.mode != VisualCursorMode::Edit);
+        self.visual_cursor.mode = VisualCursorMode::Edit;
+        let curr_char = self.buffer.current_char();
+        if curr_char != '\n' {
+            self.buffer.move_right_unbounded().expect("should not fail");
+            self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
+        }
     }
 
     fn draw_cursor(&self, font_cache: &mut FontCache) -> rusttype::Rect<f32> {
@@ -335,8 +351,9 @@ impl EditorView {
     }
 
     fn insert_text(&mut self, text: &str, font_cache: &mut FontCache) {
+        println!("inserting {:?}", text);
         self.buffer.insert_before(text);
-        let _ = self.move_right(font_cache);
+        let _ = self.move_right_unbounded(font_cache);
     }
 
     fn remove_current_char(&mut self) {
@@ -344,7 +361,7 @@ impl EditorView {
     }
 
     fn remove_previous_char(&mut self, font_cache: &mut FontCache) {
-        self.move_left(font_cache).map(|_| {
+        self.move_left_unbounded(font_cache).map(|_| {
             self.buffer.remove_current_char();
         });
     }
@@ -376,34 +393,11 @@ impl VisualCursor {
         hmetrics.advance_width * (horizontal_offset.0 - 1) as f32
     }
 
-    fn move_to_col(&mut self, offset: HorizontalOffset, font_cache: &mut FontCache) {
-        self.position.x = Self::x_from_horizontal_offset(offset, font_cache);
-    }
-
-    fn move_left(&mut self, font_cache: &mut FontCache, left_char: char) {
-        let left_glyph = font_cache.get_glyph(left_char);
-        let left_hmetrics = left_glyph.h_metrics();
-        self.position.x -= left_hmetrics.advance_width;
-    }
-
-    fn move_right(&mut self, font_cache: &mut FontCache, curr_char: char) {
-        let curr_glyph = font_cache.get_glyph(curr_char);
-        let curr_hmetrics = curr_glyph.h_metrics();
-        self.position.x += curr_hmetrics.advance_width;
-    }
-
-    fn move_down(&mut self, font_cache: &mut FontCache, hoffset: HorizontalOffset) {
+    fn set_position(&mut self, cursor: &edrus::buffer::Cursor, font_cache: &mut FontCache) {
         let vmetrics = font_cache.v_metrics();
         let vertical_offset = (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
-        self.position.y += vertical_offset;
-        self.position.x = Self::x_from_horizontal_offset(hoffset, font_cache);
-    }
-
-    fn move_up(&mut self, font_cache: &mut FontCache, hoffset: HorizontalOffset) {
-        let vmetrics = font_cache.v_metrics();
-        let vertical_offset = (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
-        self.position.y -= vertical_offset;
-        self.position.x = Self::x_from_horizontal_offset(hoffset, font_cache);
+        self.position.x = Self::x_from_horizontal_offset(cursor.col, font_cache);
+        self.position.y = vertical_offset * (cursor.line.0 - 1) as f32;
     }
 
     fn draw_cursor_for(&self, font_cache: &mut FontCache, c: char) -> rusttype::Rect<f32> {
@@ -862,7 +856,7 @@ fn main() {
                         VirtualKeyCode::Escape => {
                             if editor_view.visual_cursor.mode() != VisualCursorMode::Normal {
                                 editor_view.visual_cursor.enter_normal_mode();
-                                editor_view.move_left(&mut font_cache);
+                                editor_view.move_left_unbounded(&mut font_cache);
                                 window.request_redraw();
                             }
                         }
@@ -894,10 +888,12 @@ fn main() {
                             });
                         }
                         VirtualKeyCode::I => {
-                            if editor_view.visual_cursor.mode() != VisualCursorMode::Edit {
-                                editor_view.visual_cursor.enter_edit_mode();
-                                window.request_redraw();
-                            }
+                            editor_view.visual_cursor.enter_edit_mode();
+                            window.request_redraw();
+                        }
+                        VirtualKeyCode::A => {
+                            editor_view.enter_append_mode(&mut font_cache);
+                            window.request_redraw();
                         }
                         VirtualKeyCode::E => {
                             if ctrl_pressed {
@@ -916,9 +912,8 @@ fn main() {
                             window.request_redraw();
                         }
                         VirtualKeyCode::Key0 => {
-                            editor_view.move_start_line(&mut font_cache).map(|_| {
-                                window.request_redraw();
-                            });
+                            editor_view.move_start_line(&mut font_cache);
+                            window.request_redraw();
                         }
                         _ => {}
                     }
