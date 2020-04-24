@@ -1,6 +1,7 @@
 use crate::text_buffer::{CharMetric, HorizontalOffset, Line, LineMetric, SimplePieceTable, TextBuffer};
 use std::path::Path;
 
+#[derive(Debug)]
 pub struct Cursor {
     pub pos: usize,
     pub col: HorizontalOffset,
@@ -197,9 +198,6 @@ impl Buffer {
     }
 
     pub fn remove_current_char(&mut self) {
-        if self.current_char() == '\n' {
-            return;
-        }
         self.piece_table
             .remove(self.cursor.pos..self.cursor.pos + 1)
             .expect("remove failed");

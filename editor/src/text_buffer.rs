@@ -454,44 +454,45 @@ impl TextBuffer for SimplePieceTable {
     #[flamer::flame]
     fn column_for_offset(&self, offset: usize) -> Option<HorizontalOffset> {
         let current_piece = self.get_current_piece(offset)?;
-        let piece_offset = offset - current_piece.len_until;
-        let buffer = self.get_buffer(&current_piece.piece);
+        let current_piece_slice = current_piece
+            .piece
+            .get_slice(self.get_buffer(&current_piece.piece));
+        let piece_offset = PieceOffset(offset - current_piece.len_until);
 
-        if buffer.as_bytes()[current_piece.piece.start + piece_offset] == '\n' as u8 {
-            return Some(HorizontalOffset(1));
-        }
-
-        let prev_lines = self.scan_lines(-1, current_piece.index, piece_offset);
-
-        if prev_lines.is_empty() {
-            return Some(HorizontalOffset(offset + 1));
-        }
-
-        let (prev_line_index, prev_line_offset) = prev_lines[0];
-        if prev_line_index == current_piece.index {
-            return Some(HorizontalOffset(piece_offset - prev_line_offset));
-        }
-
-        let mut col_offset = 0;
+        let mut line_start_offset = None;
+        let is_end_of_file_newline = {
+            let last_index = self.pieces.len() - 1;
+            last_index == current_piece.index
+                && piece_offset.0 == self.pieces[last_index].len - 1
+                && current_piece_slice.char_at(piece_offset) == Some('\n')
+        };
 
         for (i, piece) in self
             .pieces
             .iter()
             .enumerate()
-            .take(current_piece.index + 1)
-            .skip(prev_line_index)
+            .rev()
+            .skip(self.pieces.len() - (current_piece.index + 1))
         {
-            let start_piece_offset = if i == prev_line_index { prev_line_offset } else { 0 };
-            let end_offset = if i == current_piece.index {
+            let piece_slice = piece.get_slice(self.get_buffer(&piece));
+            let start_offset = if i == current_piece.index {
                 piece_offset
             } else {
-                piece.len
+                PieceOffset(piece.len)
             };
-
-            col_offset += end_offset - start_piece_offset;
+            if let Some((_, newline)) = LineMetric::prev(&piece_slice, start_offset) {
+                line_start_offset = Some(self.get_absolute_offset(i, newline.0));
+                break;
+            }
         }
 
-        Some(HorizontalOffset(col_offset))
+        if is_end_of_file_newline {
+            Some(HorizontalOffset(1))
+        } else if let Some(line_start_offset) = line_start_offset {
+            Some(HorizontalOffset(offset - line_start_offset))
+        } else {
+            Some(HorizontalOffset(offset + 1))
+        }
     }
 
     #[flamer::flame]
