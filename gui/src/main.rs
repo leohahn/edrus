@@ -353,7 +353,10 @@ impl EditorView {
     fn insert_text(&mut self, text: &str, font_cache: &mut FontCache) {
         println!("inserting {:?}", text);
         self.buffer.insert_before(text);
-        let _ = self.move_right_unbounded(font_cache);
+        // FIXME: this seems inneficient.
+        for _ in 0..text.len() {
+            let _ = self.move_right_unbounded(font_cache);
+        }
     }
 
     fn remove_current_char(&mut self) {
@@ -849,7 +852,10 @@ fn main() {
                         VirtualKeyCode::Divide => editor_view.insert_text("/", &mut font_cache),
                         VirtualKeyCode::Backslash => editor_view.insert_text("\\", &mut font_cache),
                         VirtualKeyCode::Underline => editor_view.insert_text("_", &mut font_cache),
-                        VirtualKeyCode::Tab => editor_view.insert_text("\t", &mut font_cache),
+                        VirtualKeyCode::Tab => {
+                            // FIXME: tabs are not correctly rendered.
+                            editor_view.insert_text("    ", &mut font_cache)
+                        }
                         VirtualKeyCode::Subtract => editor_view.insert_text("-", &mut font_cache),
                         VirtualKeyCode::Add => editor_view.insert_text("+", &mut font_cache),
                         VirtualKeyCode::At => editor_view.insert_text("@", &mut font_cache),
