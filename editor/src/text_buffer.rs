@@ -432,7 +432,10 @@ impl TextBuffer for SimplePieceTable {
             let piece_slice = piece.get_slice(self.get_buffer(piece));
             let mut piece_offset = PieceOffset(0);
 
-            if LineMetric::at_boundary(&piece_slice, piece_offset) {
+            let offset_smaller_than_piece_offset =
+                i < current_piece.index || piece_offset < current_piece_offset;
+
+            if LineMetric::at_boundary(&piece_slice, piece_offset) && offset_smaller_than_piece_offset {
                 line += 1;
             }
 
@@ -591,40 +594,18 @@ impl TextBuffer for SimplePieceTable {
         let is_current_char_newline =
             current_piece_buffer.as_bytes()[current_piece.piece.start + piece_offset] == '\n' as u8;
 
-        let current_col = if is_current_char_newline {
-            1
-        } else {
-            let mut col = 0;
-
-            for (i, piece) in self
-                .pieces
-                .iter()
-                .enumerate()
-                .take(current_piece.index + 1)
-                .skip(first_piece_index)
-            {
-                let start_offset = if i == first_piece_index {
-                    first_newline_offset
-                } else {
-                    0
-                };
-                let end_offset = if i == current_piece.index {
-                    piece_offset
-                } else {
-                    piece.len
-                };
-                col += end_offset - start_offset;
-            }
-            col
-        };
+        let HorizontalOffset(current_col) = self.column_for_offset(offset)?;
 
         if lines.len() == 1 {
             // It means that the above line is the first line.
             // NOTE: We take current_col - 1 here since the col starts at 1 instead of 0.
             // TODO: maybe change columns internally to start at 0?
             let abs_first_newline_offset = self.get_absolute_offset(first_piece_index, first_newline_offset);
-
-            Some((current_col - 1).min(abs_first_newline_offset - 1))
+            if abs_first_newline_offset == 0 {
+                Some(0)
+            } else {
+                Some((current_col - 1).min(abs_first_newline_offset - 1))
+            }
         } else if is_current_char_newline {
             let is_last_char =
                 current_piece.index == self.pieces.len() - 1 && piece_offset == current_piece.piece.len - 1;
@@ -702,7 +683,6 @@ impl TextBuffer for SimplePieceTable {
     fn next_line(&self, offset: usize) -> Option<usize> {
         let current_piece = self.get_current_piece(offset)?;
         let piece_offset = offset - current_piece.len_until;
-        let prev_lines = self.scan_lines(-1, current_piece.index, piece_offset);
         let next_lines = self.scan_lines(1, current_piece.index, piece_offset);
 
         if next_lines.is_empty() {
@@ -717,16 +697,7 @@ impl TextBuffer for SimplePieceTable {
             return Some(offset + 1);
         }
 
-        let current_col = if prev_lines.is_empty() {
-            // The current line is the first line.
-            offset + 1
-        } else if current_char_is_newline {
-            1
-        } else {
-            let (prev_line_index, prev_line_offset) = prev_lines[0];
-            let abs_offset = self.get_absolute_offset(prev_line_index, prev_line_offset);
-            offset - abs_offset
-        };
+        let HorizontalOffset(current_col) = self.column_for_offset(offset)?;
 
         assert!(next_lines.len() == 1);
         let (next_line_index, next_line_offset) = next_lines[0];
@@ -735,6 +706,7 @@ impl TextBuffer for SimplePieceTable {
         let mut correct_index = next_line_index;
 
         for (i, piece) in self.pieces.iter().enumerate().skip(next_line_index) {
+            println!("iteration start: {}", i);
             let start_offset = if i == next_line_index {
                 next_line_offset + 1
             } else {
@@ -773,7 +745,7 @@ impl TextBuffer for SimplePieceTable {
 
             // Try to find a newline or the current column.
             if let Some(newline) = memchr('\n' as u8, piece_slice) {
-                if i == next_line_index && newline == 0 {
+                if i >= next_line_index && newline == 0 {
                     // If right after the first newline we have another newline,
                     // we just return it as the current position.
                     // he[y]\n\nman --> hey\n[\n]man.
@@ -1372,6 +1344,19 @@ version = "0.7.9""#;
     }
 
     #[test]
+    fn prev_line_3() {
+        let table_str = "\ntext with starting new line";
+        let table = SimplePieceTable::new(table_str.to_owned());
+
+        assert_eq!(table.char_at(0), Some('\n'));
+        assert_eq!(table.char_at(1), Some('t'));
+        assert_eq!(table.prev_line(1), Some(0));
+
+        assert_eq!(table.line_for_offset(0), Some(Line(1)));
+        assert_eq!(table.line_for_offset(1), Some(Line(2)));
+    }
+
+    #[test]
     fn next_line_1() {
         let text = "the dog is amazing\n";
         let mut table = SimplePieceTable::new(text.to_owned());
@@ -1804,5 +1789,17 @@ debug = true
             };
             assert_eq!(res, test_case.expected);
         }
+    }
+
+    #[test]
+    fn inserting_new_lines() -> Result<(), Error> {
+        let text = "first line.\nsecond line.";
+        let mut table = SimplePieceTable::new(text.to_owned());
+
+        table.insert(12, "\n")?;
+        assert_eq!(table.contents(), "first line.\n\nsecond line.");
+        assert_eq!(table.next_line(0), Some(12));
+
+        Ok(())
     }
 }

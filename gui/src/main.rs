@@ -841,6 +841,22 @@ fn main() {
                         VirtualKeyCode::W => editor_view.insert_text("w", &mut font_cache),
                         VirtualKeyCode::Y => editor_view.insert_text("y", &mut font_cache),
                         VirtualKeyCode::Z => editor_view.insert_text("z", &mut font_cache),
+                        VirtualKeyCode::Comma => editor_view.insert_text(",", &mut font_cache),
+                        VirtualKeyCode::Period => editor_view.insert_text(".", &mut font_cache),
+                        VirtualKeyCode::Multiply => editor_view.insert_text("*", &mut font_cache),
+                        VirtualKeyCode::Minus => editor_view.insert_text("-", &mut font_cache),
+                        VirtualKeyCode::Equals => editor_view.insert_text("=", &mut font_cache),
+                        VirtualKeyCode::Divide => editor_view.insert_text("/", &mut font_cache),
+                        VirtualKeyCode::Backslash => editor_view.insert_text("\\", &mut font_cache),
+                        VirtualKeyCode::Underline => editor_view.insert_text("_", &mut font_cache),
+                        VirtualKeyCode::Tab => editor_view.insert_text("\t", &mut font_cache),
+                        VirtualKeyCode::Subtract => editor_view.insert_text("-", &mut font_cache),
+                        VirtualKeyCode::Add => editor_view.insert_text("+", &mut font_cache),
+                        VirtualKeyCode::At => editor_view.insert_text("@", &mut font_cache),
+                        VirtualKeyCode::Apostrophe => editor_view.insert_text("'", &mut font_cache),
+                        VirtualKeyCode::Semicolon => editor_view.insert_text(";", &mut font_cache),
+                        VirtualKeyCode::Slash => editor_view.insert_text("/", &mut font_cache),
+                        VirtualKeyCode::Return => editor_view.insert_text("\n", &mut font_cache),
                         VirtualKeyCode::Key0 => editor_view.insert_text("0", &mut font_cache),
                         VirtualKeyCode::Key1 => editor_view.insert_text("1", &mut font_cache),
                         VirtualKeyCode::Key2 => editor_view.insert_text("2", &mut font_cache),
@@ -856,7 +872,7 @@ fn main() {
                         VirtualKeyCode::Escape => {
                             if editor_view.visual_cursor.mode() != VisualCursorMode::Normal {
                                 editor_view.visual_cursor.enter_normal_mode();
-                                editor_view.move_left_unbounded(&mut font_cache);
+                                editor_view.move_left(&mut font_cache);
                                 window.request_redraw();
                             }
                         }
