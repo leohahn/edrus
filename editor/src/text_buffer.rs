@@ -22,6 +22,7 @@ pub trait TextBuffer {
     fn line_for_offset(&self, offset: usize) -> Option<Line>;
 
     fn find_before(&self, offset: usize, character: char) -> Option<usize>;
+    fn find_after(&self, offset: usize, character: char) -> Option<usize>;
 }
 
 // This is based on the Metric trait from xi-editor.
@@ -376,6 +377,10 @@ fn len_utf8_from_first_byte(b: u8) -> usize {
 }
 
 impl TextBuffer for SimplePieceTable {
+    fn find_after(&self, offset: usize, character: char) -> Option<usize> {
+        unimplemented!()
+    }
+
     fn find_before(&self, offset: usize, character: char) -> Option<usize> {
         let current_piece = self.get_current_piece(offset)?;
         let piece_offset = offset - current_piece.len_until;

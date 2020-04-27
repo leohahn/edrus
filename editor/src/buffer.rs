@@ -51,6 +51,10 @@ impl Buffer {
         self.piece_table.find_before(self.cursor.pos, character)
     }
 
+    pub fn find_after(&self, character: char) -> Option<usize> {
+        self.piece_table.find_after(self.cursor.pos, character)
+    }
+
     pub fn move_to(&mut self, offset: usize) -> Option<()> {
         self.column(offset).and_then(|col| {
             self.piece_table.line_for_offset(offset).map(|line| {

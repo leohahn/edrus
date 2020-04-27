@@ -334,6 +334,8 @@ impl EditorView {
         }
     }
 
+    fn move_end_of_line(&mut self, font_cache: &mut FontCache) {}
+
     fn draw_cursor(&self, font_cache: &mut FontCache) -> rusttype::Rect<f32> {
         self.visual_cursor
             .draw_cursor_for(font_cache, self.buffer.current_char())
@@ -609,6 +611,7 @@ fn main() {
     };
     let mut font_cache = FontCache::new(font_scale, font_data);
     let mut ctrl_pressed = false;
+    let mut shift_pressed = false;
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -800,6 +803,7 @@ fn main() {
                 ..
             } => {
                 ctrl_pressed = modifiers_state.ctrl();
+                shift_pressed = modifiers_state.shift();
             }
             event::Event::WindowEvent {
                 event: event::WindowEvent::KeyboardInput { input: key, .. },
@@ -914,6 +918,9 @@ fn main() {
                             window.request_redraw();
                         }
                         VirtualKeyCode::A => {
+                            if shift_pressed {
+                                editor_view.move_end_of_line(&mut font_cache);
+                            }
                             editor_view.enter_append_mode(&mut font_cache);
                             window.request_redraw();
                         }
