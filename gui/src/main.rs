@@ -296,6 +296,19 @@ impl EditorView {
         self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
     }
 
+    fn move_end_of_line(&mut self, font_cache: &mut FontCache) {
+        if self.buffer.current_char() == '\n' {
+            return;
+        }
+        let new_offset = if let Some(offset) = self.buffer.find_after('\n') {
+            offset - 1
+        } else {
+            self.buffer.contents().len() - 1
+        };
+        self.buffer.move_to(new_offset);
+        self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
+    }
+
     fn move_left(&mut self, font_cache: &mut FontCache) -> Option<()> {
         self.buffer.move_left().map(|_| {
             self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
@@ -333,8 +346,6 @@ impl EditorView {
             self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
         }
     }
-
-    fn move_end_of_line(&mut self, font_cache: &mut FontCache) {}
 
     fn draw_cursor(&self, font_cache: &mut FontCache) -> rusttype::Rect<f32> {
         self.visual_cursor
@@ -960,6 +971,12 @@ fn main() {
                         VirtualKeyCode::Key0 => {
                             editor_view.move_start_line(&mut font_cache);
                             window.request_redraw();
+                        }
+                        VirtualKeyCode::Key4 => {
+                            if shift_pressed {
+                                editor_view.move_end_of_line(&mut font_cache);
+                                window.request_redraw();
+                            }
                         }
                         _ => {}
                     }

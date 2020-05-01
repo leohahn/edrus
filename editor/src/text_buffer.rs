@@ -378,7 +378,35 @@ fn len_utf8_from_first_byte(b: u8) -> usize {
 
 impl TextBuffer for SimplePieceTable {
     fn find_after(&self, offset: usize, character: char) -> Option<usize> {
-        unimplemented!()
+        let current_piece = self.get_current_piece(offset)?;
+        let piece_offset = PieceOffset(offset - current_piece.len_until);
+
+        for (index, piece) in self.pieces.iter().enumerate().skip(current_piece.index) {
+            let curr_buffer = self.get_buffer(piece);
+            let piece_slice = piece.get_slice(curr_buffer);
+            let mut curr_offset = if index == current_piece.index {
+                piece_offset
+            } else {
+                PieceOffset(0)
+            };
+
+            if index != current_piece.index {
+                if piece_slice.char_at(curr_offset)? == character {
+                    let abs = self.get_absolute_offset(index, curr_offset.0);
+                    return Some(abs);
+                }
+            }
+
+            while let Some((next_char, next_offset)) = CharMetric::next(&piece_slice, curr_offset) {
+                if next_char == character {
+                    let abs = self.get_absolute_offset(index, next_offset.0);
+                    return Some(abs);
+                }
+                curr_offset = next_offset;
+            }
+        }
+
+        None
     }
 
     fn find_before(&self, offset: usize, character: char) -> Option<usize> {
@@ -1634,6 +1662,34 @@ debug = true
         {
             assert_eq!(table.char_at(13), Some('e'));
             assert_eq!(table.find_before(18, ']'), None);
+        }
+
+        Ok(())
+    }
+
+    //     const WORKSPACE_TEXT: &str = r#"[workspace]
+    // members = [
+    //     "editor",
+    //     "gui",
+    // ]
+
+    // [profile.release]
+    // debug = true
+    // "#;
+
+    #[test]
+    fn workspace_text_find_after() -> Result<(), Error> {
+        let table = SimplePieceTable::new(WORKSPACE_TEXT.to_owned());
+
+        {
+            assert_eq!(table.char_at(6), Some('p'));
+            assert_eq!(table.find_after(6, '\n'), Some(11));
+            assert_eq!(table.find_after(6, ']'), Some(10));
+        }
+
+        {
+            assert_eq!(table.char_at(18), Some('s'));
+            assert_eq!(table.find_after(18, '\n'), Some(23));
         }
 
         Ok(())
