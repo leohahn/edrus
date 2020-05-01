@@ -612,6 +612,7 @@ fn main() {
     let mut font_cache = FontCache::new(font_scale, font_data);
     let mut ctrl_pressed = false;
     let mut shift_pressed = false;
+    let mut cursor_inside_window = true;
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -789,6 +790,10 @@ fn main() {
                 ..
             } => match mouse_scroll_delta {
                 event::MouseScrollDelta::LineDelta(_, y) => {
+                    if !cursor_inside_window {
+                        return;
+                    }
+
                     if y < 0.0 {
                         editor_view.scroll_down(&font_cache);
                     } else {
@@ -804,6 +809,18 @@ fn main() {
             } => {
                 ctrl_pressed = modifiers_state.ctrl();
                 shift_pressed = modifiers_state.shift();
+            }
+            event::Event::WindowEvent {
+                event: event::WindowEvent::CursorEntered { .. },
+                ..
+            } => {
+                cursor_inside_window = true;
+            }
+            event::Event::WindowEvent {
+                event: event::WindowEvent::CursorLeft { .. },
+                ..
+            } => {
+                cursor_inside_window = false;
             }
             event::Event::WindowEvent {
                 event: event::WindowEvent::KeyboardInput { input: key, .. },
