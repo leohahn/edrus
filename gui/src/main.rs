@@ -182,7 +182,6 @@ fn get_view_matrix(eye: &Point3<f32>) -> Matrix4<f32> {
 }
 
 struct EditorView {
-    top_y: f32,
     height: u32,
     width: u32,
     visual_cursor: VisualCursor,
@@ -206,7 +205,6 @@ impl EditorView {
         let eye = Point3::new(0.0, 0.0, -5.0);
 
         Self {
-            top_y: 0 as f32,
             height: height,
             width: width,
             visual_cursor: VisualCursor::new(0.0, 0.0),
@@ -218,7 +216,7 @@ impl EditorView {
     }
 
     fn top_y(&self) -> f32 {
-        self.top_y
+        self.eye.y
     }
 
     fn height(&self) -> u32 {
@@ -244,18 +242,16 @@ impl EditorView {
         );
     }
 
-    fn scroll_down(&mut self, font_cache: &FontCache) {
+    fn scroll_down(&mut self, times: u32, font_cache: &FontCache) {
         let vmetrics = font_cache.v_metrics();
-        let vertical_offset = (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
-        self.top_y += vertical_offset;
+        let vertical_offset = ((vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap) * times as f32;
         self.eye.y += vertical_offset;
         self.view_matrix = get_view_matrix(&self.eye);
     }
 
-    fn scroll_up(&mut self, font_cache: &FontCache) {
+    fn scroll_up(&mut self, times: u32, font_cache: &FontCache) {
         let vmetrics = font_cache.v_metrics();
-        let vertical_offset = (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
-        self.top_y -= vertical_offset;
+        let vertical_offset = ((vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap) * times as f32;
         self.eye.y -= vertical_offset;
         self.view_matrix = get_view_matrix(&self.eye);
     }
@@ -264,9 +260,9 @@ impl EditorView {
         self.buffer.move_up().map(|_| {
             self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
 
-            let closeness_top = self.visual_cursor.position.y - self.top_y;
+            let closeness_top = self.visual_cursor.position.y - self.eye.y;
             if closeness_top < 0.0 {
-                self.scroll_up(font_cache);
+                self.scroll_up(1, font_cache);
             }
         })
     }
@@ -279,9 +275,9 @@ impl EditorView {
             let vertical_offset = vmetrics.ascent - vmetrics.descent;
 
             let closeness_bottom =
-                (self.top_y + self.height as f32) - (self.visual_cursor.position.y + vertical_offset);
+                (self.eye.y + self.height as f32) - (self.visual_cursor.position.y + vertical_offset);
             if closeness_bottom < 0.0 {
-                self.scroll_down(font_cache);
+                self.scroll_down(1, font_cache);
             }
         })
     }
@@ -806,9 +802,9 @@ fn main() {
                     }
 
                     if y < 0.0 {
-                        editor_view.scroll_down(&font_cache);
+                        editor_view.scroll_down(1, &font_cache);
                     } else {
-                        editor_view.scroll_up(&font_cache);
+                        editor_view.scroll_up(1, &font_cache);
                     }
                     window.request_redraw();
                 }
@@ -954,13 +950,13 @@ fn main() {
                         }
                         VirtualKeyCode::E => {
                             if ctrl_pressed {
-                                editor_view.scroll_down(&font_cache);
+                                editor_view.scroll_down(1, &font_cache);
                                 window.request_redraw();
                             }
                         }
                         VirtualKeyCode::Y => {
                             if ctrl_pressed {
-                                editor_view.scroll_up(&font_cache);
+                                editor_view.scroll_up(1, &font_cache);
                                 window.request_redraw();
                             }
                         }
@@ -975,6 +971,18 @@ fn main() {
                         VirtualKeyCode::Key4 => {
                             if shift_pressed {
                                 editor_view.move_end_of_line(&mut font_cache);
+                                window.request_redraw();
+                            }
+                        }
+                        VirtualKeyCode::D => {
+                            if ctrl_pressed {
+                                editor_view.scroll_down(5, &mut font_cache);
+                                window.request_redraw();
+                            }
+                        }
+                        VirtualKeyCode::U => {
+                            if ctrl_pressed {
+                                editor_view.scroll_up(5, &mut font_cache);
                                 window.request_redraw();
                             }
                         }
