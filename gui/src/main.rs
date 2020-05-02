@@ -11,6 +11,8 @@ extern crate rusttype;
 extern crate serde_derive;
 extern crate winit;
 
+mod footer;
+mod rendering;
 mod scripting;
 
 use edrus::text_buffer::HorizontalOffset;
@@ -29,13 +31,13 @@ use winit::{
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-struct UBO {
+struct ColorBufferObject {
     color: Vector4<f32>,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-struct CoordinateUniformBuffer {
+struct CameraBufferObject {
     view_projection: Matrix4<f32>,
     model: Matrix4<f32>,
 }
@@ -496,17 +498,6 @@ fn main() {
         .expect("Load fonts")
         .build(&device, wgpu::TextureFormat::Bgra8UnormSrgb);
 
-    let vertex_shader = include_bytes!("../shaders/cursor/vertex.spirv");
-    let vs_module = device.create_shader_module(
-        &wgpu::read_spirv(std::io::Cursor::new(&vertex_shader[..])).expect("failed to read vertex shader"),
-    );
-
-    let fragment_shader = include_bytes!("../shaders/cursor/fragment.spirv");
-    let fs_module = device.create_shader_module(
-        &wgpu::read_spirv(std::io::Cursor::new(&fragment_shader[..]))
-            .expect("failed to read fragment shader"),
-    );
-
     let mut sc_descriptor = wgpu::SwapChainDescriptor {
         usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
         format: wgpu::TextureFormat::Bgra8UnormSrgb,
@@ -515,6 +506,8 @@ fn main() {
         present_mode: wgpu::PresentMode::Vsync,
     };
 
+    let mut swap_chain = device.create_swap_chain(&surface, &sc_descriptor);
+
     let cursor_vertex_data = create_cursor();
     let mut editor_view = EditorView::new(filepath, sc_descriptor.width, sc_descriptor.height);
 
@@ -522,96 +515,31 @@ fn main() {
         .create_buffer_mapped(cursor_vertex_data.len(), wgpu::BufferUsage::VERTEX)
         .fill_from_slice(&cursor_vertex_data);
 
-    let uniform_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        bindings: &[
-            wgpu::BindGroupLayoutBinding {
-                binding: 0,
+    let vertex_shader = include_bytes!("../shaders/cursor/vertex.spirv");
+    let fragment_shader = include_bytes!("../shaders/cursor/fragment.spirv");
+
+    let color_uniform_buffer = rendering::UniformBuffer::new::<ColorBufferObject>(&device);
+    let camera_uniform_buffer = rendering::UniformBuffer::new::<CameraBufferObject>(&device);
+
+    let shader = rendering::Shader::new(
+        &device,
+        vertex_shader,
+        fragment_shader,
+        &[
+            rendering::ShaderBinding::Uniform {
+                index: 0,
+                uniform_buffer: &color_uniform_buffer,
                 visibility: wgpu::ShaderStage::FRAGMENT,
-                ty: wgpu::BindingType::UniformBuffer { dynamic: false },
             },
-            wgpu::BindGroupLayoutBinding {
-                binding: 1,
+            rendering::ShaderBinding::Uniform {
+                index: 1,
+                uniform_buffer: &camera_uniform_buffer,
                 visibility: wgpu::ShaderStage::VERTEX,
-                ty: wgpu::BindingType::UniformBuffer { dynamic: false },
             },
         ],
-    });
+    );
 
-    let uniform_buffer_size = mem::size_of::<UBO>() as wgpu::BufferAddress;
-    let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        size: uniform_buffer_size,
-        usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
-    });
-
-    let coordinate_uniform_buffer_size = mem::size_of::<CoordinateUniformBuffer>() as wgpu::BufferAddress;
-    let coordinate_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        size: coordinate_uniform_buffer_size,
-        usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
-    });
-
-    let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        layout: &uniform_bind_group_layout,
-        bindings: &[
-            wgpu::Binding {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer {
-                    buffer: &uniform_buffer,
-                    range: 0..uniform_buffer_size,
-                },
-            },
-            wgpu::Binding {
-                binding: 1,
-                resource: wgpu::BindingResource::Buffer {
-                    buffer: &coordinate_uniform_buffer,
-                    range: 0..coordinate_uniform_buffer_size,
-                },
-            },
-        ],
-    });
-
-    let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        layout: &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            bind_group_layouts: &[&uniform_bind_group_layout],
-        }),
-        vertex_stage: wgpu::ProgrammableStageDescriptor {
-            module: &vs_module,
-            entry_point: "main",
-        },
-        fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-            module: &fs_module,
-            entry_point: "main",
-        }),
-        rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: wgpu::CullMode::None,
-            depth_bias: 0,
-            depth_bias_slope_scale: 0.0,
-            depth_bias_clamp: 0.0,
-        }),
-        primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-        color_states: &[wgpu::ColorStateDescriptor {
-            format: wgpu::TextureFormat::Bgra8UnormSrgb,
-            color_blend: wgpu::BlendDescriptor::REPLACE,
-            alpha_blend: wgpu::BlendDescriptor::REPLACE,
-            write_mask: wgpu::ColorWrite::ALL,
-        }],
-        depth_stencil_state: None,
-        index_format: wgpu::IndexFormat::Uint16,
-        vertex_buffers: &[wgpu::VertexBufferDescriptor {
-            stride: mem::size_of::<Vector2<f32>>() as wgpu::BufferAddress,
-            step_mode: wgpu::InputStepMode::Vertex,
-            attributes: &[wgpu::VertexAttributeDescriptor {
-                offset: 0,
-                shader_location: 0,
-                format: wgpu::VertexFormat::Float2,
-            }],
-        }],
-        sample_count: 1,
-        sample_mask: !0,
-        alpha_to_coverage_enabled: false,
-    });
-
-    let mut swap_chain = device.create_swap_chain(&surface, &sc_descriptor);
+    let widget_pipeline = rendering::WidgetPipeline::new(&device, &shader);
 
     let mut keyboard = Keyboard::new(Duration::from_millis(200));
     let font_scale = Scale {
@@ -641,7 +569,6 @@ fn main() {
             }
             event::Event::RedrawRequested(_) => {
                 let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { todo: 0 });
-
                 let frame = swap_chain.get_next_texture();
 
                 // Clear frame
@@ -665,22 +592,15 @@ fn main() {
                 // Draw the cursor before everything else, since it should be behind
                 // the text.
                 {
-                    {
-                        let ubo = UBO {
+                    color_uniform_buffer.fill_buffer(
+                        &device,
+                        &mut encoder,
+                        ColorBufferObject {
+                            // The color of the cursor.
                             color: Vector4::new(1.0, 0.0, 0.0, 1.0),
-                        };
-                        let temp_buf = device
-                            .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
-                            .fill_from_slice(&[ubo]);
+                        },
+                    );
 
-                        encoder.copy_buffer_to_buffer(
-                            &temp_buf,
-                            0,
-                            &uniform_buffer,
-                            0,
-                            mem::size_of::<UBO>() as wgpu::BufferAddress,
-                        );
-                    }
                     {
                         let cursor_rect = editor_view.draw_cursor(&mut font_cache);
                         let mut model = Matrix4::new_translation(&Vector3::new(
@@ -694,19 +614,13 @@ fn main() {
                             1.0,
                         ));
 
-                        let coordinate_ubo = CoordinateUniformBuffer {
-                            view_projection: editor_view.view_projection(),
-                            model: model,
-                        };
-                        let temp_buf = device
-                            .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
-                            .fill_from_slice(&[coordinate_ubo]);
-                        encoder.copy_buffer_to_buffer(
-                            &temp_buf,
-                            0,
-                            &coordinate_uniform_buffer,
-                            0,
-                            mem::size_of::<CoordinateUniformBuffer>() as wgpu::BufferAddress,
+                        camera_uniform_buffer.fill_buffer(
+                            &device,
+                            &mut encoder,
+                            CameraBufferObject {
+                                view_projection: editor_view.view_projection(),
+                                model: model,
+                            },
                         );
                     }
 
@@ -725,8 +639,8 @@ fn main() {
                         }],
                         depth_stencil_attachment: None,
                     });
-                    render_pass.set_pipeline(&render_pipeline);
-                    render_pass.set_bind_group(0, &uniform_bind_group, &[]);
+                    render_pass.set_pipeline(widget_pipeline.render_pipeline());
+                    render_pass.set_bind_group(0, shader.bind_group(), &[]);
                     render_pass.set_vertex_buffers(0, &[(&cursor_vertex_buffer, 0)]);
                     render_pass.draw(0..cursor_vertex_data.len() as u32, 0..1);
                 }
