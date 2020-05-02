@@ -739,7 +739,6 @@ impl TextBuffer for SimplePieceTable {
         let mut correct_index = next_line_index;
 
         for (i, piece) in self.pieces.iter().enumerate().skip(next_line_index) {
-            println!("iteration start: {}", i);
             let start_offset = if i == next_line_index {
                 next_line_offset + 1
             } else {

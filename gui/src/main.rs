@@ -242,16 +242,18 @@ impl EditorView {
         );
     }
 
-    fn scroll_down(&mut self, times: u32, font_cache: &FontCache) {
+    fn scroll_down(&mut self, lines: u32, font_cache: &FontCache) {
+        assert!(lines > 0);
         let vmetrics = font_cache.v_metrics();
-        let vertical_offset = ((vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap) * times as f32;
+        let vertical_offset = ((vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap) * lines as f32;
         self.eye.y += vertical_offset;
         self.view_matrix = get_view_matrix(&self.eye);
     }
 
-    fn scroll_up(&mut self, times: u32, font_cache: &FontCache) {
+    fn scroll_up(&mut self, lines: u32, font_cache: &FontCache) {
+        assert!(lines > 0);
         let vmetrics = font_cache.v_metrics();
-        let vertical_offset = ((vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap) * times as f32;
+        let vertical_offset = ((vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap) * lines as f32;
         self.eye.y -= vertical_offset;
         self.view_matrix = get_view_matrix(&self.eye);
     }
@@ -976,13 +978,23 @@ fn main() {
                         }
                         VirtualKeyCode::D => {
                             if ctrl_pressed {
-                                editor_view.scroll_down(5, &mut font_cache);
+                                let lines_to_scroll = 5;
+                                for _ in 0..lines_to_scroll {
+                                    editor_view.move_down(&mut font_cache).map(|_| {
+                                        editor_view.scroll_down(1, &mut font_cache);
+                                    });
+                                }
                                 window.request_redraw();
                             }
                         }
                         VirtualKeyCode::U => {
                             if ctrl_pressed {
-                                editor_view.scroll_up(5, &mut font_cache);
+                                let lines_to_scroll = 5;
+                                for _ in 0..lines_to_scroll {
+                                    editor_view.move_up(&mut font_cache).map(|_| {
+                                        editor_view.scroll_up(1, &mut font_cache);
+                                    });
+                                }
                                 window.request_redraw();
                             }
                         }
