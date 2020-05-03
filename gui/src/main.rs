@@ -18,7 +18,6 @@ mod scripting;
 use edrus::text_buffer::HorizontalOffset;
 use na::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
 use std::collections::HashMap;
-use std::mem;
 use std::path::Path;
 use std::time::{Duration, Instant};
 use wgpu_glyph::{GlyphBrushBuilder, Scale, Section};
@@ -187,7 +186,7 @@ struct EditorView {
     height: u32,
     width: u32,
     visual_cursor: VisualCursor,
-    buffer: edrus::buffer::Buffer,
+    cursor: edrus::cursor::Cursor,
     projection_matrix: Matrix4<f32>,
     view_matrix: Matrix4<f32>,
     eye: Point3<f32>,
@@ -210,7 +209,7 @@ impl EditorView {
             height: height,
             width: width,
             visual_cursor: VisualCursor::new(0.0, 0.0),
-            buffer: edrus::buffer::Buffer::new(filepath).expect("buffer creation failed"),
+            cursor: edrus::cursor::Cursor::new(filepath).expect("buffer creation failed"),
             projection_matrix: projection_matrix,
             view_matrix: get_view_matrix(&eye),
             eye: eye,
@@ -261,8 +260,8 @@ impl EditorView {
     }
 
     fn move_up(&mut self, font_cache: &mut FontCache) -> Option<()> {
-        self.buffer.move_up().map(|_| {
-            self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
+        self.cursor.move_up().map(|_| {
+            self.visual_cursor.set_position(&self.cursor, font_cache);
 
             let closeness_top = self.visual_cursor.position.y - self.eye.y;
             if closeness_top < 0.0 {
@@ -272,8 +271,8 @@ impl EditorView {
     }
 
     fn move_down(&mut self, font_cache: &mut FontCache) -> Option<()> {
-        self.buffer.move_down().map(|_| {
-            self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
+        self.cursor.move_down().map(|_| {
+            self.visual_cursor.set_position(&self.cursor, font_cache);
 
             let vmetrics = font_cache.v_metrics();
             let vertical_offset = vmetrics.ascent - vmetrics.descent;
@@ -287,69 +286,69 @@ impl EditorView {
     }
 
     fn move_start_line(&mut self, font_cache: &mut FontCache) {
-        let new_offset = if let Some(offset) = self.buffer.find_before('\n') {
+        let new_offset = if let Some(offset) = self.cursor.find_before('\n') {
             offset + 1
         } else {
             0
         };
-        self.buffer.move_to(new_offset);
-        self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
+        self.cursor.move_to(new_offset);
+        self.visual_cursor.set_position(&self.cursor, font_cache);
     }
 
     fn move_end_of_line(&mut self, font_cache: &mut FontCache) {
-        if self.buffer.current_char() == '\n' {
+        if self.cursor.current_char() == '\n' {
             return;
         }
-        let new_offset = if let Some(offset) = self.buffer.find_after('\n') {
+        let new_offset = if let Some(offset) = self.cursor.find_after('\n') {
             offset - 1
         } else {
-            self.buffer.contents().len() - 1
+            self.cursor.contents().len() - 1
         };
-        self.buffer.move_to(new_offset);
-        self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
+        self.cursor.move_to(new_offset);
+        self.visual_cursor.set_position(&self.cursor, font_cache);
     }
 
     fn move_left(&mut self, font_cache: &mut FontCache) -> Option<()> {
-        self.buffer.move_left().map(|_| {
-            self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
+        self.cursor.move_left().map(|_| {
+            self.visual_cursor.set_position(&self.cursor, font_cache);
         })
     }
 
     fn move_left_unbounded(&mut self, font_cache: &mut FontCache) -> Option<()> {
-        self.buffer.move_left_unbounded().map(|_| {
-            self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
+        self.cursor.move_left_unbounded().map(|_| {
+            self.visual_cursor.set_position(&self.cursor, font_cache);
         })
     }
 
     fn move_right(&mut self, font_cache: &mut FontCache) -> Option<()> {
-        self.buffer.move_right().map(|_| {
-            self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
+        self.cursor.move_right().map(|_| {
+            self.visual_cursor.set_position(&self.cursor, font_cache);
         })
     }
 
     fn move_right_unbounded(&mut self, font_cache: &mut FontCache) -> Option<()> {
-        self.buffer.move_right_unbounded().map(|_| {
-            self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
+        self.cursor.move_right_unbounded().map(|_| {
+            self.visual_cursor.set_position(&self.cursor, font_cache);
         })
     }
 
     fn contents(&self) -> &str {
-        self.buffer.contents()
+        self.cursor.contents()
     }
 
     fn enter_append_mode(&mut self, font_cache: &mut FontCache) {
         assert!(self.visual_cursor.mode != VisualCursorMode::Edit);
         self.visual_cursor.mode = VisualCursorMode::Edit;
-        let curr_char = self.buffer.current_char();
+        let curr_char = self.cursor.current_char();
         if curr_char != '\n' {
-            self.buffer.move_right_unbounded().expect("should not fail");
-            self.visual_cursor.set_position(&self.buffer.cursor, font_cache);
+            self.cursor.move_right_unbounded().expect("should not fail");
+            self.visual_cursor.set_position(&self.cursor, font_cache);
         }
     }
 
     fn draw_cursor(&self, font_cache: &mut FontCache) -> rusttype::Rect<f32> {
         self.visual_cursor
-            .draw_cursor_for(font_cache, self.buffer.current_char())
+            .draw_cursor_for(font_cache, self.cursor.current_char())
     }
 
     fn view_projection(&self) -> Matrix4<f32> {
@@ -365,7 +364,7 @@ impl EditorView {
 
     fn insert_text(&mut self, text: &str, font_cache: &mut FontCache) {
         println!("inserting {:?}", text);
-        self.buffer.insert_before(text);
+        self.cursor.insert_before(text);
         // FIXME: this seems inneficient.
         for _ in 0..text.len() {
             let _ = self.move_right_unbounded(font_cache);
@@ -373,12 +372,12 @@ impl EditorView {
     }
 
     fn remove_current_char(&mut self) {
-        self.buffer.remove_current_char();
+        self.cursor.remove_current_char();
     }
 
     fn remove_previous_char(&mut self, font_cache: &mut FontCache) {
         self.move_left_unbounded(font_cache).map(|_| {
-            self.buffer.remove_current_char();
+            self.cursor.remove_current_char();
         });
     }
 }
@@ -409,7 +408,7 @@ impl VisualCursor {
         hmetrics.advance_width * (horizontal_offset.0 - 1) as f32
     }
 
-    fn set_position(&mut self, cursor: &edrus::buffer::Cursor, font_cache: &mut FontCache) {
+    fn set_position(&mut self, cursor: &edrus::cursor::Cursor, font_cache: &mut FontCache) {
         let vmetrics = font_cache.v_metrics();
         let vertical_offset = (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
         self.position.x = Self::x_from_horizontal_offset(cursor.col, font_cache);
@@ -432,6 +431,14 @@ impl VisualCursor {
 
         rect
     }
+}
+
+struct TextContent {}
+
+struct Window {
+    width: u32,
+    height: u32,
+    text_content: TextContent,
 }
 
 fn create_cursor() -> Vec<Vector2<f32>> {
@@ -547,6 +554,7 @@ fn main() {
         y: editor_config.font_scale,
     };
     let mut font_cache = FontCache::new(font_scale, font_data);
+
     let mut ctrl_pressed = false;
     let mut shift_pressed = false;
     let mut cursor_inside_window = true;
