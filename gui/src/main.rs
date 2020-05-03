@@ -839,8 +839,8 @@ fn main() {
                 ..
             } => {
                 *control_flow = ControlFlow::Exit;
-                println!("saving flamegraph");
-                flame::dump_html(std::fs::File::create("flamegraph.html").unwrap()).unwrap();
+                // println!("saving flamegraph");
+                // flame::dump_html(std::fs::File::create("flamegraph.html").unwrap()).unwrap();
             }
             _ => (),
         }
