@@ -1,5 +1,4 @@
 use nalgebra::Vector2;
-use std::marker::Copy;
 use std::mem;
 use wgpu::{
     BindGroup, BindGroupLayout, Buffer, BufferAddress, BufferDescriptor, CommandEncoder, Device,
@@ -14,6 +13,7 @@ pub struct UniformBuffer {
 impl UniformBuffer {
     pub fn new<T>(device: &Device) -> Self {
         let buffer = device.create_buffer(&BufferDescriptor {
+            label: None,
             size: mem::size_of::<T>() as BufferAddress,
             usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
         });
@@ -23,24 +23,16 @@ impl UniformBuffer {
         }
     }
 
-    pub fn size(&self) -> BufferAddress {
-        self.size
-    }
-
     pub fn buffer(&self) -> &Buffer {
         &self.buffer
     }
 
-    pub fn fill_buffer<T: Copy + 'static>(
-        &self,
-        device: &Device,
-        encoder: &mut CommandEncoder,
-        buffer_object: T,
-    ) {
-        debug_assert_eq!(self.size, mem::size_of::<T>() as BufferAddress);
-        let temp_buf = device
-            .create_buffer_mapped(1, wgpu::BufferUsage::COPY_SRC)
-            .fill_from_slice(&[buffer_object]);
+    pub fn size(&self) -> BufferAddress {
+        self.size
+    }
+
+    pub fn fill_buffer(&self, device: &Device, encoder: &mut CommandEncoder, buffer_object: &[u8]) {
+        let temp_buf = device.create_buffer_with_data(buffer_object, wgpu::BufferUsage::COPY_SRC);
         encoder.copy_buffer_to_buffer(&temp_buf, 0, &self.buffer, 0, self.size());
     }
 }
@@ -86,7 +78,7 @@ impl Shader {
                     uniform_buffer,
                     visibility,
                 } => {
-                    descriptor_bindings.push(wgpu::BindGroupLayoutBinding {
+                    descriptor_bindings.push(wgpu::BindGroupLayoutEntry {
                         binding: *index,
                         visibility: *visibility,
                         ty: wgpu::BindingType::UniformBuffer { dynamic: false },
@@ -104,10 +96,12 @@ impl Shader {
         }
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
             bindings: &descriptor_bindings[..],
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
             layout: &bind_group_layout,
             bindings: &bind_group_bindings[..],
         });
@@ -168,8 +162,10 @@ impl WidgetPipeline {
                 write_mask: wgpu::ColorWrite::ALL,
             }],
             depth_stencil_state: None,
-            index_format: wgpu::IndexFormat::Uint16,
-            vertex_buffers: &[shader.vertex_buffer_descriptor.clone()],
+            vertex_state: wgpu::VertexStateDescriptor {
+                index_format: wgpu::IndexFormat::Uint16,
+                vertex_buffers: &[shader.vertex_buffer_descriptor.clone()],
+            },
             sample_count: 1,
             sample_mask: !0,
             alpha_to_coverage_enabled: false,

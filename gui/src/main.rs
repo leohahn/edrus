@@ -1,8 +1,10 @@
+extern crate bytemuck;
 extern crate dirs;
 extern crate edrus;
 extern crate env_logger;
 extern crate flame;
 extern crate flamer;
+extern crate futures;
 extern crate gluon;
 extern crate gluon_codegen;
 extern crate log;
@@ -16,7 +18,8 @@ mod keyboard;
 mod rendering;
 mod scripting;
 
-use edrus::text_buffer::HorizontalOffset;
+use bytemuck::{Pod, Zeroable};
+use edrus::text_buffer::{HorizontalOffset, Line};
 use na::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
 use std::collections::HashMap;
 use std::path::Path;
@@ -26,21 +29,27 @@ use winit::{
     event,
     event::VirtualKeyCode,
     event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
+    window::{Window, WindowBuilder},
 };
 
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 struct ColorBufferObject {
     color: Vector4<f32>,
 }
 
-#[repr(C)]
+unsafe impl Pod for ColorBufferObject {}
+unsafe impl Zeroable for ColorBufferObject {}
+
+#[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 struct CameraBufferObject {
     view_projection: Matrix4<f32>,
     model: Matrix4<f32>,
 }
+
+unsafe impl Pod for CameraBufferObject {}
+unsafe impl Zeroable for CameraBufferObject {}
 
 struct FontCache<'a> {
     font: rusttype::Font<'static>,
@@ -134,15 +143,14 @@ impl EditorView {
         self.height
     }
 
-    fn set_height(&mut self, height: u32) {
-        self.height = height;
-    }
-
-    fn set_width(&mut self, width: u32) {
-        self.width = width;
+    fn width(&self) -> u32 {
+        self.width
     }
 
     fn update_size(&mut self, width: u32, height: u32) {
+        self.width = width;
+        self.height = height;
+
         self.projection_matrix = Matrix4::new_orthographic(
             0.0,              // left
             width as f32,     // right
@@ -265,7 +273,7 @@ impl EditorView {
         #[cfg_attr(rustfmt, rustfmt_skip)]
         let mx_correction: Matrix4<f32> = Matrix4::new(
             1.0, 0.0, 0.0, 0.0,
-            0.0, -1.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
             0.0, 0.0, 0.5, 0.5,
             0.0, 0.0, 0.0, 1.0,
         );
@@ -343,72 +351,80 @@ impl VisualCursor {
     }
 }
 
-struct TextContent {}
-
-struct Window {
+struct EditorWindow<'a> {
     width: u32,
     height: u32,
-    text_content: TextContent,
+    focused: bool,
+    editor_view: &'a EditorView,
 }
 
-fn create_cursor() -> Vec<Vector2<f32>> {
+struct FooterWindow {
+    width: u32,
+    height: u32,
+    line: Line,
+    col: HorizontalOffset,
+}
+
+// TODO: is this safe to assume for vector2?
+unsafe impl Pod for PositionVertex {}
+unsafe impl Zeroable for PositionVertex {}
+
+#[derive(Copy, Clone, Debug)]
+struct PositionVertex {
+    position: Vector2<f32>,
+}
+
+impl PositionVertex {
+    fn new(x: f32, y: f32) -> Self {
+        Self {
+            position: Vector2::new(x, y),
+        }
+    }
+}
+
+fn create_cursor() -> Vec<PositionVertex> {
     let xo = 0.0;
     let yo = 0.0;
     let width = 1.0;
     let height = 1.0;
     vec![
-        Vector2::new(xo, yo),
-        Vector2::new(xo + width, yo),
-        Vector2::new(xo + width, yo + height),
-        Vector2::new(xo + width, yo + height),
-        Vector2::new(xo, yo + height),
-        Vector2::new(xo, yo),
+        PositionVertex::new(xo, yo),
+        PositionVertex::new(xo + width, yo),
+        PositionVertex::new(xo + width, yo + height),
+        PositionVertex::new(xo + width, yo + height),
+        PositionVertex::new(xo, yo + height),
+        PositionVertex::new(xo, yo),
     ]
 }
 
-fn main() {
-    if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "edrus=debug");
-    }
-    env_logger::init();
-
+async fn run_async(
+    event_loop: EventLoop<()>,
+    window: Window,
+    size: winit::dpi::PhysicalSize<u32>,
+    surface: wgpu::Surface,
+    filepath: String,
+) {
     let vm = scripting::startup_engine().expect("failed to startup scripting engine");
-
     let editor_config = scripting::get_editor_config(&vm);
 
-    let filepath = match std::env::args().nth(1) {
-        Some(path) => path,
-        None => {
-            log::error!("failed to get filepath from first argument");
-            std::process::exit(1);
-        }
-    };
-
-    let event_loop = EventLoop::new();
-
-    let (window, size, surface) = {
-        let window = WindowBuilder::new()
-            .with_title("edrus")
-            .build(&event_loop)
-            .unwrap();
-        let size = window.inner_size();
-        println!("width={}, height={}", size.width, size.height);
-        let surface = wgpu::Surface::create(&window);
-        (window, size, surface)
-    };
-
-    let adapter = wgpu::Adapter::request(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::Default,
-        backends: wgpu::BackendBit::PRIMARY,
-    })
+    let adapter = wgpu::Adapter::request(
+        &wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::Default,
+            compatible_surface: None, // TODO: check the correct value.
+        },
+        wgpu::BackendBit::PRIMARY,
+    )
+    .await
     .unwrap();
 
-    let (mut device, mut queue) = adapter.request_device(&wgpu::DeviceDescriptor {
-        extensions: wgpu::Extensions {
-            anisotropic_filtering: false,
-        },
-        limits: wgpu::Limits::default(),
-    });
+    let (device, queue) = adapter
+        .request_device(&wgpu::DeviceDescriptor {
+            extensions: wgpu::Extensions {
+                anisotropic_filtering: false,
+            },
+            limits: wgpu::Limits::default(),
+        })
+        .await;
 
     let font_data: &[u8] = include_bytes!("../fonts/iosevka-fixed-regular.ttf");
     let mut glyph_brush = GlyphBrushBuilder::using_font_bytes(font_data)
@@ -420,17 +436,17 @@ fn main() {
         format: wgpu::TextureFormat::Bgra8UnormSrgb,
         width: size.width,
         height: size.height,
-        present_mode: wgpu::PresentMode::Vsync,
+        present_mode: wgpu::PresentMode::Mailbox,
     };
 
     let mut swap_chain = device.create_swap_chain(&surface, &sc_descriptor);
 
     let cursor_vertex_data = create_cursor();
-    let mut editor_view = EditorView::new(filepath, sc_descriptor.width, sc_descriptor.height);
 
-    let cursor_vertex_buffer = device
-        .create_buffer_mapped(cursor_vertex_data.len(), wgpu::BufferUsage::VERTEX)
-        .fill_from_slice(&cursor_vertex_data);
+    let cursor_vertex_buffer = device.create_buffer_with_data(
+        bytemuck::cast_slice(&cursor_vertex_data),
+        wgpu::BufferUsage::VERTEX,
+    );
 
     let vertex_shader = include_bytes!("../shaders/cursor/vertex.spirv");
     let fragment_shader = include_bytes!("../shaders/cursor/fragment.spirv");
@@ -469,6 +485,22 @@ fn main() {
     let mut shift_pressed = false;
     let mut cursor_inside_window = true;
 
+    let mut editor_view = EditorView::new(filepath, sc_descriptor.width, sc_descriptor.height);
+
+    let main_window = EditorWindow {
+        width: 0,
+        height: 0,
+        focused: true,
+        editor_view: &editor_view,
+    };
+
+    let footer_window = FooterWindow {
+        width: 0,
+        height: 0,
+        line: Line(1),
+        col: HorizontalOffset(1),
+    };
+
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
 
@@ -481,13 +513,14 @@ fn main() {
                 sc_descriptor.height = size.height;
                 swap_chain = device.create_swap_chain(&surface, &sc_descriptor);
                 editor_view.update_size(sc_descriptor.width, sc_descriptor.height);
-                editor_view.set_height(size.height);
-                editor_view.set_width(size.width);
                 window.request_redraw();
             }
             event::Event::RedrawRequested(_) => {
-                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { todo: 0 });
-                let frame = swap_chain.get_next_texture();
+                let mut encoder =
+                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+                let frame = swap_chain
+                    .get_next_texture()
+                    .expect("timed out getting texture from the GPU");
 
                 // Clear frame
                 {
@@ -513,10 +546,10 @@ fn main() {
                     color_uniform_buffer.fill_buffer(
                         &device,
                         &mut encoder,
-                        ColorBufferObject {
+                        bytemuck::bytes_of(&ColorBufferObject {
                             // The color of the cursor.
                             color: Vector4::new(1.0, 0.0, 0.0, 1.0),
-                        },
+                        }),
                     );
 
                     {
@@ -535,10 +568,10 @@ fn main() {
                         camera_uniform_buffer.fill_buffer(
                             &device,
                             &mut encoder,
-                            CameraBufferObject {
+                            bytemuck::bytes_of(&CameraBufferObject {
                                 view_projection: editor_view.view_projection(),
                                 model: model,
-                            },
+                            }),
                         );
                     }
 
@@ -559,7 +592,8 @@ fn main() {
                     });
                     render_pass.set_pipeline(widget_pipeline.render_pipeline());
                     render_pass.set_bind_group(0, shader.bind_group(), &[]);
-                    render_pass.set_vertex_buffers(0, &[(&cursor_vertex_buffer, 0)]);
+                    // TODO: are these parameters correct?
+                    render_pass.set_vertex_buffer(0, &cursor_vertex_buffer, 0, 0);
                     render_pass.draw(0..cursor_vertex_data.len() as u32, 0..1);
                 }
 
@@ -595,7 +629,7 @@ fn main() {
                                 screen_position: (0.0, line_y),
                                 color: [1.0, 1.0, 1.0, 1.0],
                                 scale: font_scale,
-                                bounds: (sc_descriptor.width as f32, sc_descriptor.height as f32),
+                                bounds: (editor_view.width() as f32, editor_view.height() as f32),
                                 ..Section::default()
                             });
 
@@ -616,7 +650,7 @@ fn main() {
                     {
                         let _guard = flame::start_guard("draw text");
                         glyph_brush
-                            .draw_queued_with_transform(&mut device, &mut encoder, &frame.view, view_proj)
+                            .draw_queued_with_transform(&device, &mut encoder, &frame.view, view_proj)
                             .expect("Draw queued");
                     }
                 }
@@ -845,4 +879,34 @@ fn main() {
             _ => (),
         }
     });
+}
+
+fn main() {
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "edrus=debug");
+    }
+    env_logger::init();
+
+    let filepath = match std::env::args().nth(1) {
+        Some(path) => path,
+        None => {
+            log::error!("failed to get filepath from first argument");
+            std::process::exit(1);
+        }
+    };
+
+    let event_loop = EventLoop::new();
+
+    let (window, size, surface) = {
+        let window = WindowBuilder::new()
+            .with_title("edrus")
+            .build(&event_loop)
+            .unwrap();
+        let size = window.inner_size();
+        println!("width={}, height={}", size.width, size.height);
+        let surface = wgpu::Surface::create(&window);
+        (window, size, surface)
+    };
+
+    futures::executor::block_on(run_async(event_loop, window, size, surface, filepath));
 }
