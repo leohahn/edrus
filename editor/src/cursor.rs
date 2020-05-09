@@ -136,7 +136,10 @@ impl Cursor {
     }
 
     pub fn move_down(&mut self) -> Option<usize> {
+        println!("moving down: pos={}", self.pos);
+        println!("contents: {:?}", self.piece_table.contents());
         self.piece_table.next_line(self.pos).map(|offset| {
+            println!("done");
             println!("===== move_down =====");
             println!("prev char: offset={} char={:?}", self.pos, self.current_char());
             self.pos = offset;

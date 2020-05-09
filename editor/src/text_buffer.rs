@@ -310,10 +310,10 @@ impl SimplePieceTable {
             for (index, piece) in self.pieces.iter().enumerate().skip(piece_index) {
                 let start_offset = if first_call {
                     first_call = false;
-                    if piece_offset + 1 > piece.len {
+                    if piece_offset > piece.len {
                         continue;
                     } else {
-                        piece_offset + 1
+                        piece_offset
                     }
                 } else {
                     0
@@ -718,6 +718,8 @@ impl TextBuffer for SimplePieceTable {
         let piece_offset = offset - current_piece.len_until;
         let next_lines = self.scan_lines(1, current_piece.index, piece_offset);
 
+        dbg!(&next_lines);
+
         if next_lines.is_empty() {
             return None;
         }
@@ -727,7 +729,13 @@ impl TextBuffer for SimplePieceTable {
             current_piece_buffer.as_bytes()[current_piece.piece.start + piece_offset] == '\n' as u8;
 
         if current_char_is_newline {
-            return Some(offset + 1);
+            let last_offset =
+                self.get_absolute_offset(self.pieces.len() - 1, self.pieces.last().unwrap().len - 1);
+            return if offset + 1 > last_offset {
+                None
+            } else {
+                Some(offset + 1)
+            };
         }
 
         let HorizontalOffset(current_col) = self.column_for_offset(offset)?;
@@ -1694,17 +1702,21 @@ debug = true
         Ok(())
     }
 
-    //     const WORKSPACE_TEXT: &str = r#"[workspace]
-    // members = [
-    //     "editor",
-    //     "gui",
-    // ]
+    const CARGO_MAKEFILE_TEXT: &str = r#"[env]
+cargo_make_extend_workspace_makefile = "true"
 
-    // [profile.release]
-    // debug = true
-    // "#;
+[tasks.compile-shaders]"#;
+
     #[test]
+    fn cargo_makefile_movement() {
+        let table = SimplePieceTable::new(CARGO_MAKEFILE_TEXT.to_owned());
 
+        assert_eq!(table.char_at(52), Some('\n'));
+        assert_eq!(table.next_line(52), Some(53));
+        assert_eq!(table.char_at(53), Some('['));
+    }
+
+    #[test]
     fn line_for_offset() {
         let table = SimplePieceTable::new(WORKSPACE_TEXT.to_owned());
         assert_eq!(table.line_for_offset(0), Some(Line(1)));
