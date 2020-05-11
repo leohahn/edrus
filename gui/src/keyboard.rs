@@ -28,6 +28,8 @@ impl KeyState {
 pub struct Keyboard {
     keys: HashMap<VirtualKeyCode, KeyState>,
     initial_delay: Duration,
+    ctrl_pressed: bool,
+    shift_pressed: bool,
 }
 
 impl Keyboard {
@@ -35,6 +37,8 @@ impl Keyboard {
         Keyboard {
             keys: HashMap::new(),
             initial_delay: initial_delay,
+            ctrl_pressed: false,
+            shift_pressed: false,
         }
     }
 
@@ -90,5 +94,21 @@ impl Keyboard {
                 }
             }
         });
+    }
+
+    pub fn set_shift(&mut self, pressed: bool) {
+        self.shift_pressed = pressed;
+    }
+
+    pub fn set_ctrl(&mut self, pressed: bool) {
+        self.ctrl_pressed = pressed;
+    }
+
+    pub fn shift_pressed(&self) -> bool {
+        self.shift_pressed
+    }
+
+    pub fn ctrl_pressed(&self) -> bool {
+        self.ctrl_pressed
     }
 }

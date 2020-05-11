@@ -79,23 +79,6 @@ impl<'a> FontCache<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
-enum VisualCursorMode {
-    Normal,
-    Edit,
-}
-
-struct VisualCursor {
-    position: Point2<f32>,
-    mode: VisualCursorMode,
-}
-
-impl VisualCursor {
-    fn mode(&self) -> VisualCursorMode {
-        self.mode
-    }
-}
-
 fn get_view_matrix(eye: &Point3<f32>) -> Matrix4<f32> {
     let target = eye + Vector3::new(0.0, 0.0, 1.0);
     na::Matrix4::look_at_rh(eye, &target, &-Vector3::y())
@@ -104,8 +87,8 @@ fn get_view_matrix(eye: &Point3<f32>) -> Matrix4<f32> {
 struct EditorView {
     height: u32,
     width: u32,
-    visual_cursor: VisualCursor,
-    cursor: edrus::cursor::Cursor,
+    normal_cursor: Option<edrus::cursor::Normal>,
+    insert_cursor: Option<edrus::cursor::Insert>,
     projection_matrix: Matrix4<f32>,
     view_matrix: Matrix4<f32>,
     eye: Point3<f32>,
@@ -127,8 +110,8 @@ impl EditorView {
         Self {
             height: height,
             width: width,
-            visual_cursor: VisualCursor::new(0.0, 0.0),
-            cursor: edrus::cursor::Cursor::new(filepath).expect("buffer creation failed"),
+            normal_cursor: Some(edrus::cursor::Normal::new(filepath).expect("buffer creation failed")),
+            insert_cursor: None,
             projection_matrix: projection_matrix,
             view_matrix: get_view_matrix(&eye),
             eye: eye,
@@ -177,96 +160,107 @@ impl EditorView {
         self.view_matrix = get_view_matrix(&self.eye);
     }
 
-    fn move_up(&mut self, font_cache: &mut FontCache) -> Option<()> {
-        self.cursor.move_up().map(|_| {
-            self.visual_cursor.set_position(&self.cursor, font_cache);
-
-            let closeness_top = self.visual_cursor.position.y - self.eye.y;
-            if closeness_top < 0.0 {
-                self.scroll_up(1, font_cache);
-            }
-        })
-    }
-
-    fn move_down(&mut self, font_cache: &mut FontCache) -> Option<()> {
-        self.cursor.move_down().map(|_| {
-            self.visual_cursor.set_position(&self.cursor, font_cache);
-
-            let vmetrics = font_cache.v_metrics();
-            let vertical_offset = vmetrics.ascent - vmetrics.descent;
-
-            let closeness_bottom =
-                (self.eye.y + self.height as f32) - (self.visual_cursor.position.y + vertical_offset);
-            if closeness_bottom < 0.0 {
-                self.scroll_down(1, font_cache);
-            }
-        })
-    }
-
-    fn move_start_line(&mut self, font_cache: &mut FontCache) {
-        let new_offset = if let Some(offset) = self.cursor.find_before('\n') {
-            offset + 1
+    fn follow_cursor(&mut self, font_cache: &FontCache) {
+        let line = if let Some(normal_cursor) = self.normal_cursor.as_ref() {
+            normal_cursor.line
+        } else if let Some(insert_cursor) = self.insert_cursor.as_ref() {
+            insert_cursor.line
         } else {
-            0
+            unreachable!()
         };
-        self.cursor.move_to(new_offset);
-        self.visual_cursor.set_position(&self.cursor, font_cache);
+
+        let vmetrics = font_cache.v_metrics();
+        let vertical_offset = vmetrics.ascent - vmetrics.descent;
+
+        let closeness_top = VisualCursor::y(line, font_cache) - self.eye.y;
+        if closeness_top < 0.0 {
+            self.scroll_up(1, font_cache);
+            return;
+        }
+
+        let closeness_bottom =
+            (self.eye.y + self.height as f32) - (VisualCursor::y(line, font_cache) + vertical_offset);
+        if closeness_bottom < 0.0 {
+            self.scroll_down(1, font_cache);
+        }
     }
 
     fn move_end_of_line(&mut self, font_cache: &mut FontCache) {
-        if self.cursor.current_char() == '\n' {
-            return;
+        if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+            if normal_cursor.current_char() == '\n' {
+                return;
+            }
+            let new_offset = if let Some(offset) = normal_cursor.find_after('\n') {
+                offset - 1
+            } else {
+                normal_cursor.contents().len() - 1
+            };
+            normal_cursor.move_to(new_offset);
         }
-        let new_offset = if let Some(offset) = self.cursor.find_after('\n') {
-            offset - 1
-        } else {
-            self.cursor.contents().len() - 1
-        };
-        self.cursor.move_to(new_offset);
-        self.visual_cursor.set_position(&self.cursor, font_cache);
     }
 
     fn move_left(&mut self, font_cache: &mut FontCache) -> Option<()> {
-        self.cursor.move_left().map(|_| {
-            self.visual_cursor.set_position(&self.cursor, font_cache);
-        })
+        let (line, col) = if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+            normal_cursor
+                .move_left()
+                .map(|_| (normal_cursor.line, normal_cursor.col))
+        } else {
+            unreachable!()
+        }?;
+
+        Some(())
     }
 
     fn move_left_unbounded(&mut self, font_cache: &mut FontCache) -> Option<()> {
-        self.cursor.move_left_unbounded().map(|_| {
-            self.visual_cursor.set_position(&self.cursor, font_cache);
-        })
+        let (line, col) = if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+            normal_cursor
+                .move_left_unbounded()
+                .map(|_| (normal_cursor.line, normal_cursor.col))
+        } else {
+            unreachable!()
+        }?;
+
+        Some(())
     }
 
     fn move_right(&mut self, font_cache: &mut FontCache) -> Option<()> {
-        self.cursor.move_right().map(|_| {
-            self.visual_cursor.set_position(&self.cursor, font_cache);
-        })
+        let (line, col) = if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+            normal_cursor
+                .move_right()
+                .map(|_| (normal_cursor.line, normal_cursor.col))
+        } else {
+            unreachable!()
+        }?;
+
+        Some(())
     }
 
-    fn move_right_unbounded(&mut self, font_cache: &mut FontCache) -> Option<()> {
-        self.cursor.move_right_unbounded().map(|_| {
-            self.visual_cursor.set_position(&self.cursor, font_cache);
-        })
-    }
+    // fn move_right_unbounded(&mut self, font_cache: &mut FontCache) -> Option<()> {
+    //     if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+    //         return normal_cursor.move_right_unbounded().map(|_| {
+    //             self.visual_cursor
+    //                 .set_position(normal_cursor.line, normal_cursor.col, font_cache);
+    //         });
+    //     }
+    //     None
+    // }
 
     fn contents(&self) -> &str {
-        self.cursor.contents()
-    }
-
-    fn enter_append_mode(&mut self, font_cache: &mut FontCache) {
-        assert!(self.visual_cursor.mode != VisualCursorMode::Edit);
-        self.visual_cursor.mode = VisualCursorMode::Edit;
-        let curr_char = self.cursor.current_char();
-        if curr_char != '\n' {
-            self.cursor.move_right_unbounded().expect("should not fail");
-            self.visual_cursor.set_position(&self.cursor, font_cache);
+        if let Some(normal_cursor) = self.normal_cursor.as_ref() {
+            normal_cursor.contents()
+        } else if let Some(insert_cursor) = self.insert_cursor.as_ref() {
+            insert_cursor.contents()
+        } else {
+            ""
         }
     }
 
     fn draw_cursor(&self, font_cache: &mut FontCache) -> rusttype::Rect<f32> {
-        self.visual_cursor
-            .draw_cursor_for(font_cache, self.cursor.current_char())
+        VisualCursor::draw_cursor_for(
+            font_cache,
+            self.normal_cursor.as_ref(),
+            self.insert_cursor.as_ref(),
+        )
     }
 
     fn view_projection(&self) -> Matrix4<f32> {
@@ -281,42 +275,425 @@ impl EditorView {
     }
 
     fn insert_text(&mut self, text: &str, font_cache: &mut FontCache) {
-        println!("inserting {:?}", text);
-        self.cursor.insert_before(text);
+        let insert_cursor = self
+            .insert_cursor
+            .as_mut()
+            .expect("should only be called on insert mode");
+        insert_cursor.insert(text);
         // FIXME: this seems inneficient.
         for _ in 0..text.len() {
-            let _ = self.move_right_unbounded(font_cache);
+            if let None = insert_cursor.move_right() {
+                break;
+            }
         }
     }
 
-    fn remove_current_char(&mut self) {
-        self.cursor.remove_current_char();
-    }
+    fn handle_key(&mut self, key: VirtualKeyCode, kb: &keyboard::Keyboard, font_cache: &mut FontCache) {
+        match key {
+            VirtualKeyCode::A => {
+                if let Some(normal_cursor) = self.normal_cursor.take() {
+                    self.insert_cursor = Some(normal_cursor.enter_append());
+                } else {
+                    self.insert_text("a", font_cache);
+                }
+            }
+            VirtualKeyCode::B => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    // TODO(lhahn): Implement back by work.
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "B" } else { "b" }, font_cache);
+                }
+            }
+            VirtualKeyCode::C => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    // TODO(lhahn): implement delete line after cursor and enter insert mode.
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "C" } else { "c" }, font_cache);
+                }
+            }
+            VirtualKeyCode::D => {
+                if kb.ctrl_pressed() {
+                    self.normal_cursor
+                        .as_mut()
+                        .map(|cursor| {
+                            let mut lines_scrolled = 0;
+                            let lines_to_scroll = 5;
+                            for _ in 0..lines_to_scroll {
+                                cursor.move_down().map(|_| lines_scrolled += 1);
+                            }
+                            lines_scrolled
+                        })
+                        .map(|lines_scrolled| {
+                            self.scroll_down(lines_scrolled, font_cache);
+                        });
+                }
 
-    fn remove_previous_char(&mut self, font_cache: &mut FontCache) {
-        self.move_left_unbounded(font_cache).map(|_| {
-            self.cursor.remove_current_char();
-        });
+                if self.insert_cursor.is_some() {
+                    self.insert_text(if kb.shift_pressed() { "D" } else { "d" }, font_cache);
+                }
+            }
+            VirtualKeyCode::E => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    if kb.ctrl_pressed() {
+                        self.scroll_down(1, font_cache);
+                    }
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "E" } else { "e" }, font_cache);
+                }
+            }
+            VirtualKeyCode::F => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    // TODO(lhahn): nothing to implement here?
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "F" } else { "f" }, font_cache);
+                }
+            }
+            VirtualKeyCode::G => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    // TODO(lhahn): implement jump to the end of the file here.
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "G" } else { "g" }, font_cache);
+                }
+            }
+            VirtualKeyCode::H => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    if kb.shift_pressed() {
+                        // TODO(lhahn): implement something here?
+                    } else {
+                        let _ = normal_cursor.move_left();
+                    }
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "H" } else { "h" }, font_cache);
+                }
+            }
+            VirtualKeyCode::I => {
+                if let Some(normal_cursor) = self.normal_cursor.take() {
+                    if kb.shift_pressed() {
+                        // TODO(lhahn): implement go to start line and insert mode.
+                    } else {
+                        self.insert_cursor = Some(normal_cursor.enter_insert());
+                    }
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "I" } else { "i" }, font_cache);
+                }
+            }
+            VirtualKeyCode::J => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    if kb.shift_pressed() {
+                        // TODO(lhahn): implement join lines.
+                    } else {
+                        let _ = normal_cursor.move_down();
+                    }
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "J" } else { "j" }, font_cache);
+                }
+            }
+            VirtualKeyCode::K => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    if kb.shift_pressed() {
+                        // TODO(lhahn): implement something here?
+                    } else {
+                        let _ = normal_cursor.move_up();
+                    }
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "K" } else { "k" }, font_cache);
+                }
+            }
+            VirtualKeyCode::L => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    if kb.shift_pressed() {
+                        // TODO(lhahn): implement something here?
+                    } else {
+                        let _ = normal_cursor.move_right();
+                    }
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "L" } else { "l" }, font_cache);
+                }
+            }
+            VirtualKeyCode::M => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    // TODO(lhahn): implement something here?
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "M" } else { "m" }, font_cache);
+                }
+            }
+            VirtualKeyCode::N => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    // TODO(lhahn): implement something here?
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "N" } else { "n" }, font_cache);
+                }
+            }
+            VirtualKeyCode::O => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    // TODO(lhahn): implement enter insert mode previous line.
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "O" } else { "o" }, font_cache);
+                }
+            }
+            VirtualKeyCode::P => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    // TODO(lhahn): implement something here?
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "p" } else { "P" }, font_cache);
+                }
+            }
+            VirtualKeyCode::Q => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    // TODO(lhahn): implement something here?
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "q" } else { "Q" }, font_cache);
+                }
+            }
+            VirtualKeyCode::R => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    // TODO(lhahn): implement after cursor replace.
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "r" } else { "S" }, font_cache);
+                }
+            }
+            VirtualKeyCode::S => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    // TODO(lhahn): implement whole line delete and insert mode here.
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "S" } else { "s" }, font_cache);
+                }
+            }
+            VirtualKeyCode::T => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    // TODO(lhahn): implement something here?
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "T" } else { "t" }, font_cache);
+                }
+            }
+            VirtualKeyCode::U => {
+                if kb.ctrl_pressed() {
+                    self.normal_cursor
+                        .as_mut()
+                        .map(|cursor| {
+                            let mut lines_scrolled = 0;
+                            let lines_to_scroll = 5;
+                            for _ in 0..lines_to_scroll {
+                                cursor.move_up().map(|_| lines_scrolled += 1);
+                            }
+                            lines_scrolled
+                        })
+                        .map(|lines_scrolled| {
+                            self.scroll_up(lines_scrolled, font_cache);
+                        });
+                }
+
+                if self.insert_cursor.is_some() {
+                    self.insert_text(if kb.shift_pressed() { "U" } else { "u" }, font_cache);
+                }
+            }
+            VirtualKeyCode::V => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    // TODO(lhahn): implement whole line select here.
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "V" } else { "v" }, font_cache);
+                }
+            }
+            VirtualKeyCode::X => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    normal_cursor.remove_current_char();
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "X" } else { "x" }, font_cache);
+                }
+            }
+            VirtualKeyCode::W => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    // TODO(lhahn): implement jump by whitespaces.
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "W" } else { "w" }, font_cache);
+                }
+            }
+            VirtualKeyCode::Y => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    if kb.ctrl_pressed() {
+                        self.scroll_up(1, font_cache);
+                    }
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "Y" } else { "y" }, font_cache);
+                }
+            }
+            VirtualKeyCode::Z => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    // TODO(lhahn): implement jump middle top bottom here.
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "Z" } else { "z" }, font_cache);
+                }
+            }
+            VirtualKeyCode::Comma => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    // TODO(lhahn): implement indent here.
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "<" } else { "," }, font_cache);
+                }
+            }
+            VirtualKeyCode::Period => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    // TODO(lhahn): implement indent here.
+                    // TODO(lhahn): implement command repeat here.
+                } else {
+                    self.insert_text(if kb.shift_pressed() { ">" } else { "." }, font_cache);
+                }
+            }
+            VirtualKeyCode::Minus => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "_" } else { "-" }, font_cache);
+                }
+            }
+            VirtualKeyCode::Equals => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "+" } else { "=" }, font_cache);
+                }
+            }
+            VirtualKeyCode::Divide => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "?" } else { "/" }, font_cache);
+                }
+            }
+            VirtualKeyCode::Backslash => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                } else {
+                    self.insert_text(if kb.shift_pressed() { "|" } else { "\\" }, font_cache);
+                }
+            }
+            VirtualKeyCode::Tab => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                } else {
+                    // FIXME: tabs are not correctly rendered.
+                    self.insert_text("    ", font_cache)
+                }
+            }
+            VirtualKeyCode::Subtract => {
+                if self.insert_cursor.is_some() {
+                    self.insert_text("-", font_cache);
+                }
+            }
+            VirtualKeyCode::Add => {
+                if self.insert_cursor.is_some() {
+                    self.insert_text("+", font_cache);
+                }
+            }
+            VirtualKeyCode::At => {
+                if self.insert_cursor.is_some() {
+                    self.insert_text("@", font_cache);
+                }
+            }
+            VirtualKeyCode::Apostrophe => {
+                if self.insert_cursor.is_some() {
+                    self.insert_text("'", font_cache);
+                }
+            }
+            VirtualKeyCode::Semicolon => {
+                if self.insert_cursor.is_some() {
+                    self.insert_text(";", font_cache);
+                }
+            }
+            VirtualKeyCode::Slash => {
+                if self.insert_cursor.is_some() {
+                    self.insert_text("/", font_cache);
+                }
+            }
+            VirtualKeyCode::Return => {
+                if self.insert_cursor.is_some() {
+                    self.insert_text("\n", font_cache);
+                }
+            }
+            VirtualKeyCode::Key0 => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    let new_offset = if let Some(offset) = normal_cursor.find_before('\n') {
+                        offset + 1
+                    } else {
+                        0
+                    };
+                    normal_cursor.move_to(new_offset);
+                } else {
+                    self.insert_text("0", font_cache);
+                }
+            }
+            VirtualKeyCode::Key1 => {
+                if self.insert_cursor.is_some() {
+                    self.insert_text("1", font_cache);
+                }
+            }
+            VirtualKeyCode::Key2 => {
+                if self.insert_cursor.is_some() {
+                    self.insert_text("2", font_cache);
+                }
+            }
+            VirtualKeyCode::Key3 => {
+                if self.insert_cursor.is_some() {
+                    self.insert_text("3", font_cache);
+                }
+            }
+            VirtualKeyCode::Key4 => {
+                if kb.shift_pressed() {
+                    if self.normal_cursor.is_some() {
+                        self.move_end_of_line(font_cache);
+                    }
+                }
+                if self.insert_cursor.is_some() {
+                    self.insert_text("4", font_cache);
+                }
+            }
+            VirtualKeyCode::Key5 => {
+                if self.insert_cursor.is_some() {
+                    self.insert_text("5", font_cache);
+                }
+            }
+            VirtualKeyCode::Key6 => {
+                if self.insert_cursor.is_some() {
+                    self.insert_text("6", font_cache);
+                }
+            }
+            VirtualKeyCode::Key7 => {
+                if self.insert_cursor.is_some() {
+                    self.insert_text("7", font_cache);
+                }
+            }
+            VirtualKeyCode::Key8 => {
+                if self.insert_cursor.is_some() {
+                    self.insert_text("8", font_cache);
+                }
+            }
+            VirtualKeyCode::Key9 => {
+                if self.insert_cursor.is_some() {
+                    self.insert_text("9", font_cache);
+                }
+            }
+            VirtualKeyCode::Space => {
+                if self.insert_cursor.is_some() {
+                    self.insert_text(" ", font_cache);
+                }
+            }
+            VirtualKeyCode::Back => {
+                if let Some(normal_cursor) = self.normal_cursor.as_mut() {
+                    normal_cursor.move_left();
+                }
+                if let Some(insert_cursor) = self.insert_cursor.as_mut() {
+                    insert_cursor.remove_previous_char();
+                }
+            }
+            VirtualKeyCode::Escape => {
+                if let Some(insert_cursor) = self.insert_cursor.take() {
+                    self.normal_cursor = Some(insert_cursor.exit());
+                }
+            }
+            _ => (),
+        }
+        self.follow_cursor(font_cache);
     }
 }
 
+struct VisualCursor {}
+
 impl VisualCursor {
-    fn new(x: f32, y: f32) -> Self {
-        Self {
-            position: Point2::new(x, y),
-            mode: VisualCursorMode::Normal,
-        }
-    }
-
-    fn enter_edit_mode(&mut self) {
-        assert!(self.mode != VisualCursorMode::Edit);
-        self.mode = VisualCursorMode::Edit;
-    }
-
-    fn enter_normal_mode(&mut self) {
-        self.mode = VisualCursorMode::Normal;
-    }
-
     fn x_from_horizontal_offset(horizontal_offset: HorizontalOffset, font_cache: &mut FontCache) -> f32 {
         assert!(horizontal_offset.0 > 0);
         // FIXME(lhahn): this is a hack, only works because I am using a
@@ -326,27 +703,50 @@ impl VisualCursor {
         hmetrics.advance_width * (horizontal_offset.0 - 1) as f32
     }
 
-    fn set_position(&mut self, cursor: &edrus::cursor::Cursor, font_cache: &mut FontCache) {
+    fn y(line: Line, font_cache: &FontCache) -> f32 {
         let vmetrics = font_cache.v_metrics();
         let vertical_offset = (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
-        self.position.x = Self::x_from_horizontal_offset(cursor.col, font_cache);
-        self.position.y = vertical_offset * (cursor.line.0 - 1) as f32;
+        vertical_offset * (line.0 - 1) as f32
     }
 
-    fn draw_cursor_for(&self, font_cache: &mut FontCache, c: char) -> rusttype::Rect<f32> {
+    fn get_position(line: Line, col: HorizontalOffset, font_cache: &mut FontCache) -> Point2<f32> {
+        let vmetrics = font_cache.v_metrics();
+        let vertical_offset = (vmetrics.ascent - vmetrics.descent) + vmetrics.line_gap;
+        Point2::new(
+            Self::x_from_horizontal_offset(col, font_cache),
+            vertical_offset * (line.0 - 1) as f32,
+        )
+    }
+
+    fn draw_cursor_for(
+        font_cache: &mut FontCache,
+        normal_cursor: Option<&edrus::cursor::Normal>,
+        insert_cursor: Option<&edrus::cursor::Insert>,
+    ) -> rusttype::Rect<f32> {
+        let (advance_width, position) = if let Some(normal_cursor) = normal_cursor {
+            (
+                font_cache
+                    .get_glyph(normal_cursor.current_char())
+                    .h_metrics()
+                    .advance_width,
+                Self::get_position(normal_cursor.line, normal_cursor.col, font_cache),
+            )
+        } else if let Some(insert_cursor) = insert_cursor {
+            (
+                2.0, // TODO: remove hardcoded advance width
+                Self::get_position(insert_cursor.line, insert_cursor.col, font_cache),
+            )
+        } else {
+            unreachable!()
+        };
         let mut rect = rusttype::Rect {
-            min: rusttype::point(self.position.x, self.position.y),
-            max: rusttype::point(self.position.x, self.position.y),
+            min: rusttype::point(position.x, position.y),
+            max: rusttype::point(position.x, position.y),
         };
 
         let vmetrics = font_cache.v_metrics();
-        let hmetrics = font_cache.get_glyph(c).h_metrics();
-        rect.max.x += match self.mode {
-            VisualCursorMode::Normal => hmetrics.advance_width,
-            _ => 2.0, // TODO: remove hardcoded value here.
-        };
+        rect.max.x += advance_width;
         rect.max.y += vmetrics.ascent - vmetrics.descent;
-
         rect
     }
 }
@@ -481,8 +881,6 @@ async fn run_async(
     };
     let mut font_cache = FontCache::new(font_scale, font_data);
 
-    let mut ctrl_pressed = false;
-    let mut shift_pressed = false;
     let mut cursor_inside_window = true;
 
     let mut editor_view = EditorView::new(filepath, sc_descriptor.width, sc_descriptor.height);
@@ -682,8 +1080,8 @@ async fn run_async(
                 event: event::WindowEvent::ModifiersChanged(modifiers_state),
                 ..
             } => {
-                ctrl_pressed = modifiers_state.ctrl();
-                shift_pressed = modifiers_state.shift();
+                keyboard.set_ctrl(modifiers_state.ctrl());
+                keyboard.set_shift(modifiers_state.shift());
             }
             event::Event::WindowEvent {
                 event: event::WindowEvent::CursorEntered { .. },
@@ -709,163 +1107,14 @@ async fn run_async(
 
                 keyboard.update(Instant::now(), virtual_keycode, key.state);
 
-                let key_state = keyboard.key_state(&virtual_keycode);
-                let should_process_key = key_state.is_repeat() || key_state.was_just_pressed();
+                let should_process_key = {
+                    let key_state = keyboard.key_state(&virtual_keycode);
+                    key_state.is_repeat() || key_state.was_just_pressed()
+                };
 
-                if editor_view.visual_cursor.mode() == VisualCursorMode::Edit && should_process_key {
-                    match virtual_keycode {
-                        VirtualKeyCode::A => editor_view.insert_text("a", &mut font_cache),
-                        VirtualKeyCode::B => editor_view.insert_text("b", &mut font_cache),
-                        VirtualKeyCode::C => editor_view.insert_text("c", &mut font_cache),
-                        VirtualKeyCode::D => editor_view.insert_text("d", &mut font_cache),
-                        VirtualKeyCode::E => editor_view.insert_text("e", &mut font_cache),
-                        VirtualKeyCode::F => editor_view.insert_text("f", &mut font_cache),
-                        VirtualKeyCode::G => editor_view.insert_text("g", &mut font_cache),
-                        VirtualKeyCode::H => editor_view.insert_text("h", &mut font_cache),
-                        VirtualKeyCode::I => editor_view.insert_text("i", &mut font_cache),
-                        VirtualKeyCode::J => editor_view.insert_text("j", &mut font_cache),
-                        VirtualKeyCode::K => editor_view.insert_text("k", &mut font_cache),
-                        VirtualKeyCode::L => editor_view.insert_text("l", &mut font_cache),
-                        VirtualKeyCode::M => editor_view.insert_text("m", &mut font_cache),
-                        VirtualKeyCode::N => editor_view.insert_text("n", &mut font_cache),
-                        VirtualKeyCode::O => editor_view.insert_text("o", &mut font_cache),
-                        VirtualKeyCode::P => editor_view.insert_text("p", &mut font_cache),
-                        VirtualKeyCode::Q => editor_view.insert_text("q", &mut font_cache),
-                        VirtualKeyCode::R => editor_view.insert_text("r", &mut font_cache),
-                        VirtualKeyCode::S => editor_view.insert_text("s", &mut font_cache),
-                        VirtualKeyCode::T => editor_view.insert_text("t", &mut font_cache),
-                        VirtualKeyCode::U => editor_view.insert_text("u", &mut font_cache),
-                        VirtualKeyCode::V => editor_view.insert_text("v", &mut font_cache),
-                        VirtualKeyCode::X => editor_view.insert_text("x", &mut font_cache),
-                        VirtualKeyCode::W => editor_view.insert_text("w", &mut font_cache),
-                        VirtualKeyCode::Y => editor_view.insert_text("y", &mut font_cache),
-                        VirtualKeyCode::Z => editor_view.insert_text("z", &mut font_cache),
-                        VirtualKeyCode::Comma => editor_view.insert_text(",", &mut font_cache),
-                        VirtualKeyCode::Period => editor_view.insert_text(".", &mut font_cache),
-                        VirtualKeyCode::Multiply => editor_view.insert_text("*", &mut font_cache),
-                        VirtualKeyCode::Minus => editor_view.insert_text("-", &mut font_cache),
-                        VirtualKeyCode::Equals => editor_view.insert_text("=", &mut font_cache),
-                        VirtualKeyCode::Divide => editor_view.insert_text("/", &mut font_cache),
-                        VirtualKeyCode::Backslash => editor_view.insert_text("\\", &mut font_cache),
-                        VirtualKeyCode::Underline => editor_view.insert_text("_", &mut font_cache),
-                        VirtualKeyCode::Tab => {
-                            // FIXME: tabs are not correctly rendered.
-                            editor_view.insert_text("    ", &mut font_cache)
-                        }
-                        VirtualKeyCode::Subtract => editor_view.insert_text("-", &mut font_cache),
-                        VirtualKeyCode::Add => editor_view.insert_text("+", &mut font_cache),
-                        VirtualKeyCode::At => editor_view.insert_text("@", &mut font_cache),
-                        VirtualKeyCode::Apostrophe => editor_view.insert_text("'", &mut font_cache),
-                        VirtualKeyCode::Semicolon => editor_view.insert_text(";", &mut font_cache),
-                        VirtualKeyCode::Slash => editor_view.insert_text("/", &mut font_cache),
-                        VirtualKeyCode::Return => editor_view.insert_text("\n", &mut font_cache),
-                        VirtualKeyCode::Key0 => editor_view.insert_text("0", &mut font_cache),
-                        VirtualKeyCode::Key1 => editor_view.insert_text("1", &mut font_cache),
-                        VirtualKeyCode::Key2 => editor_view.insert_text("2", &mut font_cache),
-                        VirtualKeyCode::Key3 => editor_view.insert_text("3", &mut font_cache),
-                        VirtualKeyCode::Key4 => editor_view.insert_text("4", &mut font_cache),
-                        VirtualKeyCode::Key5 => editor_view.insert_text("5", &mut font_cache),
-                        VirtualKeyCode::Key6 => editor_view.insert_text("6", &mut font_cache),
-                        VirtualKeyCode::Key7 => editor_view.insert_text("7", &mut font_cache),
-                        VirtualKeyCode::Key8 => editor_view.insert_text("8", &mut font_cache),
-                        VirtualKeyCode::Key9 => editor_view.insert_text("9", &mut font_cache),
-                        VirtualKeyCode::Space => editor_view.insert_text(" ", &mut font_cache),
-                        VirtualKeyCode::Back => editor_view.remove_previous_char(&mut font_cache),
-                        VirtualKeyCode::Escape => {
-                            if editor_view.visual_cursor.mode() != VisualCursorMode::Normal {
-                                editor_view.visual_cursor.enter_normal_mode();
-                                editor_view.move_left(&mut font_cache);
-                                window.request_redraw();
-                            }
-                        }
-                        _ => (),
-                    };
+                if should_process_key {
+                    editor_view.handle_key(virtual_keycode, &keyboard, &mut font_cache);
                     window.request_redraw();
-                }
-
-                if editor_view.visual_cursor.mode() == VisualCursorMode::Normal && should_process_key {
-                    match virtual_keycode {
-                        VirtualKeyCode::J => {
-                            editor_view.move_down(&mut font_cache).map(|_| {
-                                window.request_redraw();
-                            });
-                        }
-                        VirtualKeyCode::K => {
-                            editor_view.move_up(&mut font_cache).map(|_| {
-                                window.request_redraw();
-                            });
-                        }
-                        VirtualKeyCode::H => {
-                            editor_view.move_left(&mut font_cache).map(|_| {
-                                window.request_redraw();
-                            });
-                        }
-                        VirtualKeyCode::L => {
-                            editor_view.move_right(&mut font_cache).map(|_| {
-                                window.request_redraw();
-                            });
-                        }
-                        VirtualKeyCode::I => {
-                            editor_view.visual_cursor.enter_edit_mode();
-                            window.request_redraw();
-                        }
-                        VirtualKeyCode::A => {
-                            if shift_pressed {
-                                editor_view.move_end_of_line(&mut font_cache);
-                            }
-                            editor_view.enter_append_mode(&mut font_cache);
-                            window.request_redraw();
-                        }
-                        VirtualKeyCode::E => {
-                            if ctrl_pressed {
-                                editor_view.scroll_down(1, &font_cache);
-                                window.request_redraw();
-                            }
-                        }
-                        VirtualKeyCode::Y => {
-                            if ctrl_pressed {
-                                editor_view.scroll_up(1, &font_cache);
-                                window.request_redraw();
-                            }
-                        }
-                        VirtualKeyCode::X => {
-                            editor_view.remove_current_char();
-                            window.request_redraw();
-                        }
-                        VirtualKeyCode::Key0 => {
-                            editor_view.move_start_line(&mut font_cache);
-                            window.request_redraw();
-                        }
-                        VirtualKeyCode::Key4 => {
-                            if shift_pressed {
-                                editor_view.move_end_of_line(&mut font_cache);
-                                window.request_redraw();
-                            }
-                        }
-                        VirtualKeyCode::D => {
-                            if ctrl_pressed {
-                                let lines_to_scroll = 5;
-                                for _ in 0..lines_to_scroll {
-                                    editor_view.move_down(&mut font_cache).map(|_| {
-                                        editor_view.scroll_down(1, &mut font_cache);
-                                    });
-                                }
-                                window.request_redraw();
-                            }
-                        }
-                        VirtualKeyCode::U => {
-                            if ctrl_pressed {
-                                let lines_to_scroll = 5;
-                                for _ in 0..lines_to_scroll {
-                                    editor_view.move_up(&mut font_cache).map(|_| {
-                                        editor_view.scroll_up(1, &mut font_cache);
-                                    });
-                                }
-                                window.request_redraw();
-                            }
-                        }
-                        _ => {}
-                    }
                 }
             }
             event::Event::WindowEvent {

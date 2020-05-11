@@ -169,6 +169,7 @@ impl Piece {
 
 // NOTE: This data structure is inefficient, eventually this should be replaced
 // with a RedBlack tree implementation or something similar.
+#[derive(Debug)]
 pub struct SimplePieceTable {
     original: String,
     added: String,
