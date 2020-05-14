@@ -294,7 +294,7 @@ impl EditorView {
                 if let Some(normal_cursor) = self.normal_cursor.take() {
                     self.insert_cursor = Some(normal_cursor.enter_append());
                 } else {
-                    self.insert_text("a", font_cache);
+                    self.insert_text(if kb.shift_pressed() { "A" } else { "a" }, font_cache);
                 }
             }
             VirtualKeyCode::B => {
@@ -435,21 +435,21 @@ impl EditorView {
                 if let Some(normal_cursor) = self.normal_cursor.as_mut() {
                     // TODO(lhahn): implement something here?
                 } else {
-                    self.insert_text(if kb.shift_pressed() { "p" } else { "P" }, font_cache);
+                    self.insert_text(if kb.shift_pressed() { "P" } else { "p" }, font_cache);
                 }
             }
             VirtualKeyCode::Q => {
                 if let Some(normal_cursor) = self.normal_cursor.as_mut() {
                     // TODO(lhahn): implement something here?
                 } else {
-                    self.insert_text(if kb.shift_pressed() { "q" } else { "Q" }, font_cache);
+                    self.insert_text(if kb.shift_pressed() { "Q" } else { "q" }, font_cache);
                 }
             }
             VirtualKeyCode::R => {
                 if let Some(normal_cursor) = self.normal_cursor.as_mut() {
                     // TODO(lhahn): implement after cursor replace.
                 } else {
-                    self.insert_text(if kb.shift_pressed() { "r" } else { "S" }, font_cache);
+                    self.insert_text(if kb.shift_pressed() { "R" } else { "r" }, font_cache);
                 }
             }
             VirtualKeyCode::S => {
@@ -592,12 +592,12 @@ impl EditorView {
             }
             VirtualKeyCode::Semicolon => {
                 if self.insert_cursor.is_some() {
-                    self.insert_text(";", font_cache);
+                    self.insert_text(if kb.shift_pressed() { ":" } else { ";" }, font_cache);
                 }
             }
             VirtualKeyCode::Slash => {
                 if self.insert_cursor.is_some() {
-                    self.insert_text("/", font_cache);
+                    self.insert_text(if kb.shift_pressed() { "?" } else { "/" }, font_cache);
                 }
             }
             VirtualKeyCode::Return => {
